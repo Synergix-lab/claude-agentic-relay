@@ -32,6 +32,8 @@ func Run(args []string) {
 		runThread(rest)
 	case "stats":
 		runStats()
+	case "conversations":
+		runConversations(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		printUsage()
@@ -76,6 +78,7 @@ commands:
   inbox <agent>       show unread messages for agent
   send <from> <to> <msg>  send a message
   thread <id>         show full message thread
+  conversations <agent>  list conversations for agent
   stats               global statistics
 
 flags:

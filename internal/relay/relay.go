@@ -27,7 +27,7 @@ func New(database *db.DB) *Relay {
 	registry := NewSessionRegistry(mcpSrv)
 	handlers := NewHandlers(database, registry)
 
-	// Register all 6 tools
+	// Register all tools
 	mcpSrv.AddTools(
 		server.ServerTool{Tool: registerAgentTool(), Handler: handlers.HandleRegisterAgent},
 		server.ServerTool{Tool: sendMessageTool(), Handler: handlers.HandleSendMessage},
@@ -35,6 +35,10 @@ func New(database *db.DB) *Relay {
 		server.ServerTool{Tool: getThreadTool(), Handler: handlers.HandleGetThread},
 		server.ServerTool{Tool: listAgentsTool(), Handler: handlers.HandleListAgents},
 		server.ServerTool{Tool: markReadTool(), Handler: handlers.HandleMarkRead},
+		server.ServerTool{Tool: createConversationTool(), Handler: handlers.HandleCreateConversation},
+		server.ServerTool{Tool: listConversationsTool(), Handler: handlers.HandleListConversations},
+		server.ServerTool{Tool: getConversationMessagesTool(), Handler: handlers.HandleGetConversationMessages},
+		server.ServerTool{Tool: inviteToConversationTool(), Handler: handlers.HandleInviteToConversation},
 	)
 
 	httpSrv := server.NewStreamableHTTPServer(

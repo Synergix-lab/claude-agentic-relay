@@ -27,7 +27,7 @@ func main() {
 		case "serve":
 			startServer()
 			return
-		case "status", "agents", "inbox", "send", "thread", "stats":
+		case "status", "agents", "inbox", "send", "thread", "stats", "conversations":
 			cli.Run(os.Args[1:])
 			return
 		default:

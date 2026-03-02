@@ -190,6 +190,7 @@ agent-relay agents              # list agents (table)
 agent-relay inbox <agent>       # unread messages for agent
 agent-relay send <from> <to> <msg>  # send a message
 agent-relay thread <id>         # show thread (supports short IDs)
+agent-relay conversations <agent>   # list conversations for agent
 agent-relay stats               # global statistics
 ```
 
@@ -237,16 +238,20 @@ threads: 12
 
 ## MCP Tools
 
-Six tools exposed via MCP Streamable HTTP at `/mcp`:
+Ten tools exposed via MCP Streamable HTTP at `/mcp`:
 
 | Tool | Description |
 |------|-------------|
 | `register_agent` | Announce presence — name, role, current work |
-| `send_message` | Send to agent or `*` for broadcast |
-| `get_inbox` | Retrieve messages (unread filter, limit) |
+| `send_message` | Send to agent, `*` for broadcast, or to a conversation |
+| `get_inbox` | Retrieve messages — 1-1, broadcast, and conversation |
 | `get_thread` | Full conversation thread from any message ID |
 | `list_agents` | All registered agents with status |
-| `mark_read` | Mark messages as read |
+| `mark_read` | Mark messages or conversations as read |
+| `create_conversation` | Create a multi-agent conversation |
+| `list_conversations` | List your conversations with unread counts |
+| `get_conversation_messages` | Get messages from a conversation |
+| `invite_to_conversation` | Add an agent to a conversation |
 
 ### Message Types
 
@@ -297,6 +302,33 @@ graph TD
 
 Messages are linked via `reply_to`. Threads are reconstructed with a recursive SQL CTE from any message in the chain — no separate thread table needed.
 
+### Conversations (Multi-Agent)
+
+When 3+ agents need to collaborate on a topic, use conversations instead of point-to-point messages:
+
+```mermaid
+sequenceDiagram
+    participant B as backend
+    participant R as Relay
+    participant F as frontend
+    participant I as infra
+
+    B->>R: create_conversation("Auth redesign", [frontend, infra])
+    R-->>F: push notification
+    R-->>I: push notification
+    B->>R: send_message(conversation_id=conv-1, "Switching to JWT")
+    R-->>F: push notification
+    R-->>I: push notification
+    F->>R: send_message(conversation_id=conv-1, "Need token refresh endpoint")
+    R-->>B: push notification
+    R-->>I: push notification
+```
+
+- **All members see every message** — no more relaying between agents
+- **Unread tracking per conversation** — `last_read_at` timestamp, not per-message
+- **Backward compatible** — 1-1 messages work exactly as before (`conversation_id = NULL`)
+- **Membership enforced** — must be a member to send or read
+
 ## `/relay` Skill
 
 Installed automatically. Use in any Claude Code session:
@@ -309,6 +341,10 @@ Installed automatically. Use in any Claude Code session:
 | `/relay thread <id>` | View conversation thread |
 | `/relay read` | Mark all as read |
 | `/relay read <id>` | Mark specific message as read |
+| `/relay conversations` | List your conversations |
+| `/relay create <title> <agents...>` | Create a conversation |
+| `/relay msg <conv-id> <message>` | Send to a conversation |
+| `/relay invite <conv-id> <agent>` | Invite agent to conversation |
 
 On first run in a new project, the skill auto-bootstraps: it creates `.mcp.json` with the relay config if missing.
 
@@ -350,10 +386,13 @@ graph LR
 
 ```sql
 agents (id, name, role, description, registered_at, last_seen)
-messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at)
+messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id)
+conversations (id, title, created_by, created_at, archived_at)
+conversation_members (conversation_id, agent_name, joined_at, left_at)
+conversation_reads (conversation_id, agent_name, last_read_at)
 ```
 
-4 indexes optimize inbox queries, unread filters, and thread reconstruction.
+Indexes optimize inbox queries, unread filters, thread reconstruction, and conversation membership lookups.
 
 ## Service Management
 

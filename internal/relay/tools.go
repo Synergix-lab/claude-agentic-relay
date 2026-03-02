@@ -15,8 +15,8 @@ func registerAgentTool() mcp.Tool {
 func sendMessageTool() mcp.Tool {
 	return mcp.NewTool(
 		"send_message",
-		mcp.WithDescription("Send a message to another agent. Use '*' as recipient for broadcast."),
-		mcp.WithString("to", mcp.Description("Recipient agent name, or '*' for broadcast"), mcp.Required()),
+		mcp.WithDescription("Send a message to another agent. Use '*' as recipient for broadcast. Set conversation_id to send to a conversation (all members will see it)."),
+		mcp.WithString("to", mcp.Description("Recipient agent name, or '*' for broadcast. Ignored when conversation_id is set."), mcp.Required()),
 		mcp.WithString("type",
 			mcp.Description("Message type"),
 			mcp.Enum("question", "response", "notification", "code-snippet", "task"),
@@ -25,6 +25,7 @@ func sendMessageTool() mcp.Tool {
 		mcp.WithString("content", mcp.Description("Message body content"), mcp.Required()),
 		mcp.WithString("reply_to", mcp.Description("Message ID to reply to (for threading)")),
 		mcp.WithString("metadata", mcp.Description("JSON string of additional metadata")),
+		mcp.WithString("conversation_id", mcp.Description("Send message to a conversation instead of a single agent")),
 	)
 }
 
@@ -58,8 +59,46 @@ func markReadTool() mcp.Tool {
 		mcp.WithDescription("Mark messages as read."),
 		mcp.WithArray("message_ids",
 			mcp.Description("List of message IDs to mark as read"),
+			mcp.WithStringItems(),
+		),
+		mcp.WithString("conversation_id", mcp.Description("Mark all messages in a conversation as read (alternative to message_ids)")),
+	)
+}
+
+func createConversationTool() mcp.Tool {
+	return mcp.NewTool(
+		"create_conversation",
+		mcp.WithDescription("Create a multi-agent conversation. All members will see messages sent to it."),
+		mcp.WithString("title", mcp.Description("Conversation title"), mcp.Required()),
+		mcp.WithArray("members",
+			mcp.Description("Agent names to include (you are added automatically)"),
 			mcp.Required(),
 			mcp.WithStringItems(),
 		),
+	)
+}
+
+func listConversationsTool() mcp.Tool {
+	return mcp.NewTool(
+		"list_conversations",
+		mcp.WithDescription("List conversations you are a member of, with unread counts."),
+	)
+}
+
+func getConversationMessagesTool() mcp.Tool {
+	return mcp.NewTool(
+		"get_conversation_messages",
+		mcp.WithDescription("Get messages from a conversation, ordered chronologically."),
+		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
+		mcp.WithNumber("limit", mcp.Description("Max number of messages to return (default: 50)")),
+	)
+}
+
+func inviteToConversationTool() mcp.Tool {
+	return mcp.NewTool(
+		"invite_to_conversation",
+		mcp.WithDescription("Add an agent to an existing conversation."),
+		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
+		mcp.WithString("agent_name", mcp.Description("Agent name to invite"), mcp.Required()),
 	)
 }

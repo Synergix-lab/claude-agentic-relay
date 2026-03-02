@@ -109,8 +109,48 @@ func migrate(conn *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_agent);
 	CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(to_agent, read_at) WHERE read_at IS NULL;
 	CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(reply_to);
+
+	-- Conversations
+	CREATE TABLE IF NOT EXISTS conversations (
+		id          TEXT PRIMARY KEY,
+		title       TEXT NOT NULL,
+		created_by  TEXT NOT NULL,
+		created_at  TEXT NOT NULL,
+		archived_at TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS conversation_members (
+		conversation_id TEXT NOT NULL,
+		agent_name      TEXT NOT NULL,
+		joined_at       TEXT NOT NULL,
+		left_at         TEXT,
+		PRIMARY KEY (conversation_id, agent_name)
+	);
+	CREATE INDEX IF NOT EXISTS idx_conv_members_agent ON conversation_members(agent_name);
+
+	CREATE TABLE IF NOT EXISTS conversation_reads (
+		conversation_id TEXT NOT NULL,
+		agent_name      TEXT NOT NULL,
+		last_read_at    TEXT NOT NULL,
+		PRIMARY KEY (conversation_id, agent_name)
+	);
 	`
 
-	_, err := conn.Exec(schema)
+	// Add conversation_id column to messages if it doesn't exist (migration).
+	alterSchema := `
+	ALTER TABLE messages ADD COLUMN conversation_id TEXT;
+	`
+	alterIndex := `
+	CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+	`
+
+	if _, err := conn.Exec(schema); err != nil {
+		return err
+	}
+
+	// ALTER TABLE may fail if column already exists — that's fine.
+	conn.Exec(alterSchema)
+
+	_, err := conn.Exec(alterIndex)
 	return err
 }

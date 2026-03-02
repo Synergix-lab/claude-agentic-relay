@@ -44,10 +44,6 @@ func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequ
 func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	from := AgentFromContext(ctx)
 	to := req.GetString("to", "")
-	if to == "" {
-		return mcp.NewToolResultError("to is required"), nil
-	}
-
 	msgType := req.GetString("type", "notification")
 	subject := req.GetString("subject", "")
 	content := req.GetString("content", "")
@@ -57,17 +53,34 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 
 	metadata := req.GetString("metadata", "{}")
 	replyTo := optionalString(req.GetString("reply_to", ""))
+	conversationID := optionalString(req.GetString("conversation_id", ""))
 
 	// Touch sender's last_seen
 	_ = h.db.TouchAgent(from)
 
-	msg, err := h.db.InsertMessage(from, to, msgType, subject, content, metadata, replyTo)
+	if conversationID != nil {
+		// Conversation message — validate membership
+		isMember, err := h.db.IsConversationMember(*conversationID, from)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to check membership: %v", err)), nil
+		}
+		if !isMember {
+			return mcp.NewToolResultError("you are not a member of this conversation"), nil
+		}
+		to = "" // no single recipient for conversation messages
+	} else if to == "" {
+		return mcp.NewToolResultError("to is required (or provide conversation_id)"), nil
+	}
+
+	msg, err := h.db.InsertMessage(from, to, msgType, subject, content, metadata, replyTo, conversationID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to send message: %v", err)), nil
 	}
 
 	// Push notification
-	if to == "*" {
+	if conversationID != nil {
+		h.notifyConversation(*conversationID, from, subject, msg.ID)
+	} else if to == "*" {
 		h.registry.NotifyBroadcast(from, subject, msg.ID)
 	} else {
 		h.registry.Notify(to, from, subject, msg.ID)
@@ -135,9 +148,22 @@ func (h *Handlers) HandleListAgents(ctx context.Context, req mcp.CallToolRequest
 
 func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	agent := AgentFromContext(ctx)
+
+	// Support marking a whole conversation as read
+	convID := req.GetString("conversation_id", "")
+	if convID != "" {
+		if err := h.db.MarkConversationRead(convID, agent); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to mark conversation read: %v", err)), nil
+		}
+		return resultJSON(map[string]any{
+			"conversation_id": convID,
+			"marked_read":     true,
+		})
+	}
+
 	ids := req.GetStringSlice("message_ids", nil)
 	if len(ids) == 0 {
-		return mcp.NewToolResultError("message_ids is required"), nil
+		return mcp.NewToolResultError("message_ids or conversation_id is required"), nil
 	}
 
 	count, err := h.db.MarkRead(ids, agent)
@@ -148,6 +174,136 @@ func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) 
 	return resultJSON(map[string]any{
 		"marked_read": count,
 	})
+}
+
+func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	agent := AgentFromContext(ctx)
+	title := req.GetString("title", "")
+	if title == "" {
+		return mcp.NewToolResultError("title is required"), nil
+	}
+
+	members := req.GetStringSlice("members", nil)
+	if len(members) == 0 {
+		return mcp.NewToolResultError("at least one other member is required"), nil
+	}
+
+	// Ensure creator is included in members
+	found := false
+	for _, m := range members {
+		if m == agent {
+			found = true
+			break
+		}
+	}
+	if !found {
+		members = append([]string{agent}, members...)
+	}
+
+	conv, err := h.db.CreateConversation(title, agent, members)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to create conversation: %v", err)), nil
+	}
+
+	return resultJSON(map[string]any{
+		"conversation": conv,
+		"members":      members,
+	})
+}
+
+func (h *Handlers) HandleListConversations(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	agent := AgentFromContext(ctx)
+
+	convs, err := h.db.ListConversations(agent)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to list conversations: %v", err)), nil
+	}
+	if convs == nil {
+		convs = []models.ConversationSummary{}
+	}
+
+	return resultJSON(map[string]any{
+		"agent":         agent,
+		"count":         len(convs),
+		"conversations": convs,
+	})
+}
+
+func (h *Handlers) HandleGetConversationMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	agent := AgentFromContext(ctx)
+	convID := req.GetString("conversation_id", "")
+	if convID == "" {
+		return mcp.NewToolResultError("conversation_id is required"), nil
+	}
+	limit := req.GetInt("limit", 50)
+
+	// Verify membership
+	isMember, err := h.db.IsConversationMember(convID, agent)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to check membership: %v", err)), nil
+	}
+	if !isMember {
+		return mcp.NewToolResultError("you are not a member of this conversation"), nil
+	}
+
+	messages, err := h.db.GetConversationMessages(convID, limit)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
+	}
+	if messages == nil {
+		messages = []models.Message{}
+	}
+
+	return resultJSON(map[string]any{
+		"conversation_id": convID,
+		"count":           len(messages),
+		"messages":        messages,
+	})
+}
+
+func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	agent := AgentFromContext(ctx)
+	convID := req.GetString("conversation_id", "")
+	if convID == "" {
+		return mcp.NewToolResultError("conversation_id is required"), nil
+	}
+	invitee := req.GetString("agent_name", "")
+	if invitee == "" {
+		return mcp.NewToolResultError("agent_name is required"), nil
+	}
+
+	// Verify inviter is a member
+	isMember, err := h.db.IsConversationMember(convID, agent)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to check membership: %v", err)), nil
+	}
+	if !isMember {
+		return mcp.NewToolResultError("you are not a member of this conversation"), nil
+	}
+
+	if err := h.db.AddConversationMember(convID, invitee); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to invite: %v", err)), nil
+	}
+
+	// Notify the invitee
+	h.registry.Notify(invitee, agent, fmt.Sprintf("You were invited to conversation: %s", convID), "")
+
+	return resultJSON(map[string]any{
+		"conversation_id": convID,
+		"invited":         invitee,
+	})
+}
+
+func (h *Handlers) notifyConversation(conversationID, senderName, subject, messageID string) {
+	members, err := h.db.GetConversationMembers(conversationID)
+	if err != nil {
+		return
+	}
+	for _, m := range members {
+		if m.AgentName != senderName {
+			h.registry.Notify(m.AgentName, senderName, subject, messageID)
+		}
+	}
 }
 
 // helpers
