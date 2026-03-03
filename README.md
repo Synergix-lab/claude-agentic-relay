@@ -33,15 +33,15 @@ The relay solves both: **real-time messaging** so agents talk directly, and **pe
 
 The relay serves a real-time visualization at `http://localhost:8090/` — embedded in the binary, zero setup.
 
-<!-- TODO: Add demo video -->
-<!-- > **[Demo video]** — agents communicating, hierarchy lines, user question flow -->
-<!-- > [![Demo](docs/assets/demo-thumbnail.png)](https://...) -->
+<!-- To embed the demo video: open a GitHub issue, drag-drop docs/assets/demo.mp4, copy the URL, and paste it here -->
 
-| Canvas view | Agent detail | User questions |
-|:-----------:|:------------:|:--------------:|
-| ![Canvas](docs/assets/screenshot-canvas.png) | ![Detail](docs/assets/screenshot-detail.png) | ![Questions](docs/assets/screenshot-questions.png) |
+| Canvas with messages | Team view |
+|:--------------------:|:---------:|
+| ![Canvas](docs/assets/screenshot-canvas-messages.png) | ![Team](docs/assets/screenshot-team.png) |
 
-*Screenshots coming soon — run `agent-relay serve` and open http://localhost:8090 to see it live.*
+| Messages panel | Agent detail |
+|:--------------:|:------------:|
+| ![Messages](docs/assets/screenshot-messages.png) | ![Detail](docs/assets/screenshot-detail.png) |
 
 **Features:**
 - Pixel-art agent sprites arranged in a circle, animated message orbs
