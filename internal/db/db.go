@@ -167,13 +167,58 @@ func migrate(conn *sql.DB) error {
 	conn.Exec(`ALTER TABLE messages ADD COLUMN project TEXT NOT NULL DEFAULT 'default'`)
 	conn.Exec(`ALTER TABLE conversations ADD COLUMN project TEXT NOT NULL DEFAULT 'default'`)
 
-	// Drop the old unique constraint on agents.name (for existing DBs).
-	// SQLite doesn't support DROP INDEX IF EXISTS on auto-created unique indexes,
-	// but creating the composite index is enough — the old UNIQUE won't conflict.
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project)`)
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project)`)
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project)`)
 	conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_name ON agents(project, name)`)
 
+	// Remove the old global UNIQUE constraint on agents.name (existing DBs only).
+	// SQLite can't drop inline constraints, so we rebuild the table.
+	migrateDropGlobalUnique(conn)
+
 	return nil
+}
+
+// migrateDropGlobalUnique removes the old UNIQUE constraint on agents.name
+// that was created in early versions. Only runs if the constraint still exists.
+func migrateDropGlobalUnique(conn *sql.DB) {
+	// Check if the old sqlite_autoindex for UNIQUE(name) exists.
+	var count int
+	err := conn.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='sqlite_autoindex_agents_1'`).Scan(&count)
+	if err != nil || count == 0 {
+		return // no old constraint, nothing to do
+	}
+
+	// Rebuild the table without the inline UNIQUE on name.
+	tx, err := conn.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE TABLE agents_new (
+			id            TEXT PRIMARY KEY,
+			name          TEXT NOT NULL,
+			role          TEXT NOT NULL DEFAULT '',
+			description   TEXT NOT NULL DEFAULT '',
+			registered_at TEXT NOT NULL,
+			last_seen     TEXT NOT NULL,
+			project       TEXT NOT NULL DEFAULT 'default',
+			reports_to    TEXT
+		)`,
+		`INSERT INTO agents_new SELECT id, name, role, description, registered_at, last_seen, project, reports_to FROM agents`,
+		`DROP TABLE agents`,
+		`ALTER TABLE agents_new RENAME TO agents`,
+		`CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_name ON agents(project, name)`,
+	}
+
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return
+		}
+	}
+
+	tx.Commit()
 }
