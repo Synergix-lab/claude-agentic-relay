@@ -242,11 +242,11 @@ Ten tools exposed via MCP Streamable HTTP at `/mcp`:
 
 | Tool | Description |
 |------|-------------|
-| `register_agent` | Announce presence — name, role, current work |
+| `register_agent` | Announce presence — name, role, current work, optional `reports_to` for org hierarchy |
 | `send_message` | Send to agent, `*` for broadcast, or to a conversation |
 | `get_inbox` | Retrieve messages — 1-1, broadcast, and conversation |
 | `get_thread` | Full conversation thread from any message ID |
-| `list_agents` | All registered agents with status |
+| `list_agents` | All registered agents with status and hierarchy |
 | `mark_read` | Mark messages or conversations as read |
 | `create_conversation` | Create a multi-agent conversation |
 | `list_conversations` | List your conversations with unread counts |
@@ -262,6 +262,7 @@ Ten tools exposed via MCP Streamable HTTP at `/mcp`:
 | `notification` | FYI — "I changed the auth middleware" |
 | `code-snippet` | Share code between agents |
 | `task` | Assign work |
+| `user_question` | Ask the human user via the web UI (shows a response card) |
 
 ### Message Flow
 
@@ -329,6 +330,31 @@ sequenceDiagram
 - **Backward compatible** — 1-1 messages work exactly as before (`conversation_id = NULL`)
 - **Membership enforced** — must be a member to send or read
 
+## Agent Hierarchy
+
+Agents can declare a manager via the `reports_to` parameter on `register_agent`:
+
+```
+register_agent(name: "backend", role: "FastAPI developer", reports_to: "tech-lead")
+```
+
+This builds an org tree visible in the web UI:
+- **Canvas**: dashed lines connect agents to their managers
+- **Detail panel**: shows "Reports To" (clickable) and "Direct Reports" (clickable tags)
+- **REST API**: `GET /api/org?project=X` returns the hierarchy as nested JSON
+
+The hierarchy is purely structural — it doesn't affect permissions or message routing.
+
+## User Questions
+
+Agents can ask the human user a question via the web UI by sending a `user_question` message:
+
+```
+send_message(to: "user", type: "user_question", subject: "Need approval", content: "Should we proceed with Stripe?")
+```
+
+In the web UI, a card appears in the bottom-left with the question and a response form. When the user responds, the reply arrives in the agent's inbox as a regular message with `from: "user"`.
+
 ## `/relay` Skill
 
 Installed automatically. Use in any Claude Code session:
@@ -385,9 +411,9 @@ graph LR
 ### Database Schema
 
 ```sql
-agents (id, name, role, description, registered_at, last_seen)
-messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id)
-conversations (id, title, created_by, created_at, archived_at)
+agents (id, name, role, description, registered_at, last_seen, project, reports_to)
+messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project)
+conversations (id, title, created_by, created_at, archived_at, project)
 conversation_members (conversation_id, agent_name, joined_at, left_at)
 conversation_reads (conversation_id, agent_name, last_read_at)
 ```
@@ -431,8 +457,9 @@ main.go                         # Entry + CLI routing
 internal/
   cli/                          # CLI commands (status, agents, inbox, send, thread, stats)
   db/                           # SQLite layer (WAL, migrations, queries, stats)
-  relay/                        # MCP server, tools, handlers, push notifications
-  models/                       # Agent & Message structs
+  relay/                        # MCP server, tools, handlers, REST API, push notifications
+  models/                       # Agent, Message, Conversation structs
+  web/static/                   # Embedded web UI (canvas, sprites, real-time viz)
 skill/
   relay.md                      # Claude Code /relay command definition
 ```

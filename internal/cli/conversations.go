@@ -6,17 +6,19 @@ import (
 )
 
 func runConversations(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: agent-relay conversations <agent>")
+	project, rest := parseProject(args)
+
+	if len(rest) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: agent-relay conversations [-p project] <agent>")
 		os.Exit(1)
 	}
 
-	agentName := args[0]
+	agentName := rest[0]
 
 	d := openDB()
 	defer d.Close()
 
-	convs, err := d.ListConversations(agentName)
+	convs, err := d.ListConversations(project, agentName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

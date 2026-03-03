@@ -1,0 +1,845 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Claude Agentic Relay — Cross-platform installer (macOS + Linux)
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/Synergix-lab/claude-agentic-relay/main/install.sh | bash
+#   curl -fsSL ... | bash -s -- --port 9000 --skip-projects --no-service
+#   ./install.sh --uninstall
+
+REPO="Synergix-lab/claude-agentic-relay"
+BINARY_NAME="agent-relay"
+SERVICE_LABEL="com.agent-relay"
+DEFAULT_PORT=8090
+
+# ── Colors ───────────────────────────────────────────────────────────────────
+
+if [[ -t 1 ]] && command -v tput &>/dev/null && [[ $(tput colors 2>/dev/null || echo 0) -ge 8 ]]; then
+  BOLD=$(tput bold)
+  DIM=$(tput dim)
+  RESET=$(tput sgr0)
+  RED=$(tput setaf 1)
+  GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3)
+  BLUE=$(tput setaf 4)
+  MAGENTA=$(tput setaf 5)
+  CYAN=$(tput setaf 6)
+else
+  BOLD="" DIM="" RESET="" RED="" GREEN="" YELLOW="" BLUE="" MAGENTA="" CYAN=""
+fi
+
+info()    { echo "${BLUE}${BOLD}::${RESET} $*"; }
+success() { echo "${GREEN}${BOLD}✓${RESET} $*"; }
+warn()    { echo "${YELLOW}${BOLD}!${RESET} $*"; }
+error()   { echo "${RED}${BOLD}✗${RESET} $*" >&2; }
+step()    { echo; echo "${MAGENTA}${BOLD}[$1/5]${RESET} ${BOLD}$2${RESET}"; }
+
+die() { error "$@"; exit 1; }
+
+# ── Spinner ──────────────────────────────────────────────────────────────────
+
+SPINNER_PID=""
+
+spinner_start() {
+  local msg="$1"
+  if [[ ! -t 1 ]]; then
+    echo "  $msg..."
+    return
+  fi
+  (
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local i=0
+    while true; do
+      printf "\r  ${CYAN}%s${RESET} %s" "${frames[$i]}" "$msg"
+      i=$(( (i + 1) % ${#frames[@]} ))
+      sleep 0.1
+    done
+  ) &
+  SPINNER_PID=$!
+  disown "$SPINNER_PID" 2>/dev/null
+}
+
+spinner_stop() {
+  if [[ -n "$SPINNER_PID" ]]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+    printf "\r\033[K"
+  fi
+}
+
+trap 'spinner_stop' EXIT
+
+# ── Args ─────────────────────────────────────────────────────────────────────
+
+UNINSTALL=false
+SKIP_PROJECTS=false
+NO_SERVICE=false
+PORT=$DEFAULT_PORT
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --uninstall)    UNINSTALL=true ;;
+      --skip-projects) SKIP_PROJECTS=true ;;
+      --no-service)   NO_SERVICE=true ;;
+      --port)         shift; PORT="${1:-$DEFAULT_PORT}" ;;
+      --port=*)       PORT="${1#*=}" ;;
+      -h|--help)      usage; exit 0 ;;
+      *) die "Unknown option: $1 (try --help)" ;;
+    esac
+    shift
+  done
+}
+
+usage() {
+  cat <<EOF
+${BOLD}Claude Agentic Relay Installer${RESET}
+
+${BOLD}USAGE:${RESET}
+    install.sh [OPTIONS]
+
+${BOLD}OPTIONS:${RESET}
+    --port <PORT>       Set relay port (default: $DEFAULT_PORT)
+    --skip-projects     Skip project scanning step
+    --no-service        Don't install auto-start service
+    --uninstall         Remove relay, service, and skill
+    -h, --help          Show this help
+EOF
+}
+
+# ── Platform detection ───────────────────────────────────────────────────────
+
+OS=""
+ARCH=""
+BIN_DIR=""
+
+detect_platform() {
+  OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+  case "$OS" in
+    darwin) OS="darwin" ;;
+    linux)  OS="linux" ;;
+    *)      die "Unsupported OS: $OS" ;;
+  esac
+
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    x86_64|amd64)   ARCH="amd64" ;;
+    arm64|aarch64)   ARCH="arm64" ;;
+    *)               die "Unsupported architecture: $ARCH" ;;
+  esac
+
+  if [[ "$OS" == "darwin" ]]; then
+    BIN_DIR="/usr/local/bin"
+  else
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$BIN_DIR"
+  fi
+}
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+
+banner() {
+  echo
+  echo "${CYAN}${BOLD}  ╔═══════════════════════════════════════╗${RESET}"
+  echo "${CYAN}${BOLD}  ║   Claude Agentic Relay — Installer    ║${RESET}"
+  echo "${CYAN}${BOLD}  ╚═══════════════════════════════════════╝${RESET}"
+  echo
+  info "Platform: ${BOLD}${OS}/${ARCH}${RESET}"
+  info "Binary:   ${BOLD}${BIN_DIR}/${BINARY_NAME}${RESET}"
+  info "Port:     ${BOLD}${PORT}${RESET}"
+  echo
+}
+
+# ── Uninstall ────────────────────────────────────────────────────────────────
+
+do_uninstall() {
+  echo
+  echo "${RED}${BOLD}  Uninstalling Claude Agentic Relay${RESET}"
+  echo
+
+  # Stop service
+  if [[ "$OS" == "darwin" ]]; then
+    local plist="$HOME/Library/LaunchAgents/${SERVICE_LABEL}.plist"
+    if [[ -f "$plist" ]]; then
+      info "Stopping launchd service..."
+      launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
+      rm -f "$plist"
+      success "Removed launchd service"
+    fi
+  else
+    if systemctl --user is-active "$BINARY_NAME" &>/dev/null; then
+      info "Stopping systemd service..."
+      systemctl --user stop "$BINARY_NAME" 2>/dev/null || true
+      systemctl --user disable "$BINARY_NAME" 2>/dev/null || true
+    fi
+    local unit="$HOME/.config/systemd/user/${BINARY_NAME}.service"
+    if [[ -f "$unit" ]]; then
+      rm -f "$unit"
+      systemctl --user daemon-reload 2>/dev/null || true
+      success "Removed systemd service"
+    fi
+  fi
+
+  # Remove binary
+  local bin_path="${BIN_DIR}/${BINARY_NAME}"
+  if [[ -f "$bin_path" ]]; then
+    if [[ -w "$bin_path" ]] || [[ -w "$(dirname "$bin_path")" ]]; then
+      rm -f "$bin_path"
+    else
+      sudo rm -f "$bin_path"
+    fi
+    success "Removed binary"
+  fi
+
+  # Remove skill
+  local skill_path="$HOME/.claude/commands/relay.md"
+  if [[ -f "$skill_path" ]]; then
+    rm -f "$skill_path"
+    success "Removed /relay skill"
+  fi
+
+  # Data directory
+  local data_dir="$HOME/.agent-relay"
+  if [[ -d "$data_dir" ]]; then
+    echo
+    warn "Data directory exists: ${BOLD}${data_dir}${RESET}"
+    if [[ -t 0 ]]; then
+      read -rp "  Delete relay data (messages, agents)? [y/N] " answer
+      if [[ "${answer,,}" == "y" ]]; then
+        rm -rf "$data_dir"
+        success "Removed data directory"
+      else
+        info "Kept data directory"
+      fi
+    else
+      info "Run ${BOLD}rm -rf ${data_dir}${RESET} to delete relay data"
+    fi
+  fi
+
+  echo
+  success "${BOLD}Uninstall complete${RESET}"
+  exit 0
+}
+
+# ── Step 1: Install binary ──────────────────────────────────────────────────
+
+install_binary() {
+  step 1 "Installing binary"
+
+  local bin_path="${BIN_DIR}/${BINARY_NAME}"
+  local needs_sudo=false
+
+  # Check existing install
+  if [[ -f "$bin_path" ]]; then
+    local existing_version
+    existing_version=$("$bin_path" --version 2>/dev/null || echo "unknown")
+    warn "Existing install detected: ${BOLD}${existing_version}${RESET}"
+    if [[ -t 0 ]]; then
+      read -rp "  Upgrade? [Y/n] " answer
+      if [[ "${answer,,}" == "n" ]]; then
+        info "Skipping binary install"
+        return 0
+      fi
+    fi
+  fi
+
+  # Check write permissions
+  if [[ "$OS" == "darwin" ]] && [[ ! -w "$BIN_DIR" ]]; then
+    needs_sudo=true
+    warn "Need sudo for ${BIN_DIR}"
+  fi
+
+  # Try build from source first
+  if try_build_from_source; then
+    local tmp_bin="./agent-relay"
+    if [[ "$needs_sudo" == true ]]; then
+      if ! sudo install -m 755 "$tmp_bin" "$bin_path"; then
+        error "Failed to install to ${bin_path} (sudo required)"
+        info "Run manually: ${BOLD}sudo install -m 755 ${tmp_bin} ${bin_path}${RESET}"
+        return 1
+      fi
+    else
+      install -m 755 "$tmp_bin" "$bin_path"
+    fi
+    rm -f "$tmp_bin"
+    success "Built and installed from source"
+    return 0
+  fi
+
+  # Fallback to prebuilt
+  info "Downloading prebuilt binary..."
+  download_prebuilt "$bin_path" "$needs_sudo"
+}
+
+try_build_from_source() {
+  if ! command -v go &>/dev/null; then
+    info "Go not found, will download prebuilt binary"
+    return 1
+  fi
+
+  # CGO requires a C compiler
+  if ! command -v cc &>/dev/null && ! command -v gcc &>/dev/null; then
+    warn "No C compiler found (needed for CGO/SQLite), will download prebuilt"
+    return 1
+  fi
+
+  info "Go found, building from source..."
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  spinner_start "Cloning repository"
+  if ! git clone --depth 1 "https://github.com/${REPO}.git" "$tmpdir/src" &>/dev/null 2>&1; then
+    spinner_stop
+    warn "Clone failed, will download prebuilt"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  spinner_stop
+
+  local build_output="${PWD}/agent-relay"
+  spinner_start "Building binary (this may take a minute)"
+  if ! (cd "$tmpdir/src" && CGO_ENABLED=1 go build -ldflags="-s -w -X main.Version=$(get_latest_version)" -o "$build_output" . 2>/dev/null); then
+    spinner_stop
+    warn "Build failed, will download prebuilt"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  spinner_stop
+
+  rm -rf "$tmpdir"
+  return 0
+}
+
+get_latest_version() {
+  local version
+  version=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+  echo "${version:-dev}"
+}
+
+download_prebuilt() {
+  local bin_path="$1"
+  local needs_sudo="$2"
+
+  local version
+  version=$(get_latest_version)
+  if [[ "$version" == "dev" ]]; then
+    die "No releases found and Go not available. Install Go (https://go.dev/dl/) and retry."
+  fi
+
+  local archive_name="agent-relay-${OS}-${ARCH}.tar.gz"
+  local url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
+
+  spinner_start "Downloading ${version} for ${OS}/${ARCH}"
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  if ! curl -fsSL "$url" -o "$tmpdir/archive.tar.gz"; then
+    spinner_stop
+    rm -rf "$tmpdir"
+    die "Download failed. Check https://github.com/${REPO}/releases for available builds."
+  fi
+  spinner_stop
+
+  tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir"
+
+  if [[ "$needs_sudo" == true ]]; then
+    sudo install -m 755 "$tmpdir/agent-relay" "$bin_path"
+  else
+    install -m 755 "$tmpdir/agent-relay" "$bin_path"
+  fi
+
+  rm -rf "$tmpdir"
+  success "Installed ${BOLD}${version}${RESET} from prebuilt"
+}
+
+# ── Step 2: Install service ─────────────────────────────────────────────────
+
+install_service() {
+  step 2 "Setting up auto-start service"
+
+  if [[ "$NO_SERVICE" == true ]]; then
+    info "Skipped (--no-service)"
+    return 0
+  fi
+
+  if [[ "$OS" == "darwin" ]]; then
+    install_launchd_service
+  else
+    install_systemd_service
+  fi
+}
+
+install_launchd_service() {
+  local plist_dir="$HOME/Library/LaunchAgents"
+  local plist_path="${plist_dir}/${SERVICE_LABEL}.plist"
+  local bin_path="${BIN_DIR}/${BINARY_NAME}"
+
+  mkdir -p "$plist_dir"
+
+  # Stop existing service
+  if launchctl list "$SERVICE_LABEL" &>/dev/null; then
+    launchctl bootout "gui/$(id -u)" "$plist_path" 2>/dev/null || true
+  fi
+
+  local env_block=""
+  if [[ "$PORT" != "$DEFAULT_PORT" ]]; then
+    env_block="    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>${PORT}</string>
+    </dict>"
+  fi
+
+  cat > "$plist_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${SERVICE_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${bin_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/tmp/agent-relay.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/agent-relay.err</string>
+${env_block}
+</dict>
+</plist>
+EOF
+
+  launchctl bootstrap "gui/$(id -u)" "$plist_path" 2>/dev/null || \
+    launchctl load "$plist_path" 2>/dev/null || true
+
+  success "Installed launchd service (starts on login, restarts on crash)"
+}
+
+install_systemd_service() {
+  local unit_dir="$HOME/.config/systemd/user"
+  local unit_path="${unit_dir}/${BINARY_NAME}.service"
+  local bin_path="${BIN_DIR}/${BINARY_NAME}"
+
+  mkdir -p "$unit_dir"
+
+  cat > "$unit_path" <<EOF
+[Unit]
+Description=Claude Agentic Relay
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${bin_path}
+Restart=on-failure
+RestartSec=5
+Environment=PORT=${PORT}
+
+[Install]
+WantedBy=default.target
+EOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable "$BINARY_NAME" 2>/dev/null || true
+  systemctl --user restart "$BINARY_NAME" 2>/dev/null || true
+
+  success "Installed systemd user service (auto-start, restarts on crash)"
+
+  # Check if lingering is enabled (needed for user services without login)
+  if command -v loginctl &>/dev/null && ! loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q "yes"; then
+    warn "Tip: Run ${BOLD}loginctl enable-linger${RESET} to keep the service running after logout"
+  fi
+}
+
+# ── Step 3: Install skill ───────────────────────────────────────────────────
+
+install_skill() {
+  step 3 "Installing /relay skill"
+
+  local skill_dir="$HOME/.claude/commands"
+  local skill_path="${skill_dir}/relay.md"
+
+  mkdir -p "$skill_dir"
+
+  # Download the skill file from repo or use bundled version
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  if curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/skill/relay.md" -o "$tmpdir/relay.md" 2>/dev/null; then
+    cp "$tmpdir/relay.md" "$skill_path"
+  else
+    warn "Couldn't download skill file, creating from template"
+    cat > "$skill_path" <<'SKILL_EOF'
+You are an inter-agent communication assistant using the Agent Relay MCP server.
+
+## Your Identity
+
+Extract your agent name from the MCP server URL in the project's `.mcp.json` file (the `?agent=` query parameter). If you can't determine it, ask the user.
+
+## Commands
+
+Parse the user's arguments from `$ARGUMENTS`:
+
+- **No arguments** or **`inbox`**: Check inbox for unread messages
+- **`send <agent> <message>`**: Send a message to another agent
+- **`agents`**: List all registered agents
+- **`thread <message_id>`**: View a complete conversation thread
+- **`read`**: Mark all unread messages as read
+- **`read <message_id>`**: Mark a specific message as read
+- **`conversations`**: List your conversations with unread counts
+- **`create <title> <agent1> [agent2] ...`**: Create a conversation with specified agents
+- **`msg <conversation_id> <message>`**: Send a message to a conversation
+- **`invite <conversation_id> <agent>`**: Invite an agent to a conversation
+- **`talk`**: Enter conversation mode (proactive loop)
+
+## Behavior
+
+### On first invocation
+1. Call `register_agent` with your agent name, role (based on the project), a brief description of current work, and optionally `reports_to` (the name of the agent you report to in the org hierarchy)
+2. Then execute the requested command
+
+### Checking inbox (default)
+1. Call `get_inbox` with `unread_only: true`
+2. If there are unread messages, display them clearly
+3. If messages are questions, suggest replying with `/relay send <agent> <reply>`
+4. After displaying, call `mark_read` with all displayed message IDs
+
+### Sending a message
+1. Parse: first word after `send` is the recipient, rest is the message content
+2. Call `send_message` with `type: "notification"` (or `question` if the message ends with `?`)
+3. Use a sensible subject derived from the first ~5 words of the message
+4. Confirm the message was sent
+
+### Listing agents
+1. Call `list_agents`
+2. Display as a table with name, role, and last seen time
+
+### Viewing a thread
+1. Call `get_thread` with the message ID
+2. Display the full conversation chronologically
+
+### Marking as read
+1. If no message ID: call `get_inbox` then `mark_read` with all message IDs
+2. If message ID provided: call `mark_read` with just that ID
+SKILL_EOF
+  fi
+
+  rm -rf "$tmpdir"
+  success "Installed /relay command at ${DIM}${skill_path}${RESET}"
+}
+
+# ── Step 4: Scan and configure projects ──────────────────────────────────────
+
+scan_and_configure_projects() {
+  step 4 "Scanning for Claude Code projects"
+
+  if [[ "$SKIP_PROJECTS" == true ]]; then
+    info "Skipped (--skip-projects)"
+    return 0
+  fi
+
+  info "Looking for projects with ${BOLD}.mcp.json${RESET} or ${BOLD}CLAUDE.md${RESET}..."
+
+  local -a projects=()
+  local -a project_names=()
+
+  # Scan home directory (depth 2) for Claude Code projects
+  while IFS= read -r -d '' dir; do
+    local project_dir
+    project_dir=$(dirname "$dir")
+    # Deduplicate
+    local already=false
+    for p in "${projects[@]+"${projects[@]}"}"; do
+      if [[ "$p" == "$project_dir" ]]; then
+        already=true
+        break
+      fi
+    done
+    if [[ "$already" == false ]]; then
+      projects+=("$project_dir")
+    fi
+  done < <(find "$HOME" -maxdepth 3 -name "CLAUDE.md" -o -name ".mcp.json" -print0 2>/dev/null | head -z -100)
+
+  # Filter out non-project directories
+  local -a valid_projects=()
+  for p in "${projects[@]+"${projects[@]}"}"; do
+    # Skip hidden dirs, node_modules, etc.
+    local basename
+    basename=$(basename "$p")
+    case "$basename" in
+      .*|node_modules|vendor|.git) continue ;;
+    esac
+    # Skip the relay's own directory
+    if [[ "$p" == *"claude-agentic-relay"* ]] || [[ "$p" == *"agent-relay"* ]]; then
+      continue
+    fi
+    valid_projects+=("$p")
+  done
+
+  if [[ ${#valid_projects[@]} -eq 0 ]]; then
+    info "No Claude Code projects found"
+    info "You can manually add relay to any project's ${BOLD}.mcp.json${RESET} later:"
+    echo
+    echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp?agent=myagent\"}}}${RESET}"
+    return 0
+  fi
+
+  echo
+  info "Found ${BOLD}${#valid_projects[@]}${RESET} project(s):"
+  echo
+
+  local i=1
+  for p in "${valid_projects[@]}"; do
+    local name
+    name=$(detect_agent_name "$(basename "$p")")
+    project_names+=("$name")
+
+    local has_relay=""
+    if [[ -f "$p/.mcp.json" ]] && grep -q "agent-relay" "$p/.mcp.json" 2>/dev/null; then
+      has_relay=" ${GREEN}(already configured)${RESET}"
+    fi
+
+    printf "  ${BOLD}%2d)${RESET} %-40s → agent: ${CYAN}%s${RESET}%s\n" "$i" "${p/#$HOME/~}" "$name" "$has_relay"
+    ((i++))
+  done
+
+  echo
+  if [[ ! -t 0 ]]; then
+    info "Non-interactive mode — skipping project configuration"
+    info "Run the installer interactively to configure projects"
+    return 0
+  fi
+
+  read -rp "  Configure which projects? (${BOLD}a${RESET}ll / comma-separated numbers / ${BOLD}n${RESET}one) " choice
+
+  case "${choice,,}" in
+    n|none) info "Skipped project configuration"; return 0 ;;
+    a|all|"") ;;
+    *)
+      local -a selected=()
+      IFS=',' read -ra nums <<< "$choice"
+      for num in "${nums[@]}"; do
+        num=$(echo "$num" | tr -d ' ')
+        if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#valid_projects[@]} )); then
+          selected+=("$((num - 1))")
+        fi
+      done
+      if [[ ${#selected[@]} -eq 0 ]]; then
+        warn "No valid selections"
+        return 0
+      fi
+      local -a filtered_projects=()
+      local -a filtered_names=()
+      for idx in "${selected[@]}"; do
+        filtered_projects+=("${valid_projects[$idx]}")
+        filtered_names+=("${project_names[$idx]}")
+      done
+      valid_projects=("${filtered_projects[@]}")
+      project_names=("${filtered_names[@]}")
+      ;;
+  esac
+
+  echo
+  for i in "${!valid_projects[@]}"; do
+    configure_project "${valid_projects[$i]}" "${project_names[$i]}"
+  done
+}
+
+detect_agent_name() {
+  local dirname="$1"
+  local lower
+  lower=$(echo "$dirname" | tr '[:upper:]' '[:lower:]')
+
+  case "$lower" in
+    *api*|*backend*|*server*)         echo "backend" ;;
+    *front*|*web*|*dashboard*|*ui*)   echo "frontend" ;;
+    *infra*|*deploy*|*ops*|*devops*)  echo "infra" ;;
+    *mobile*|*ios*|*android*|*app*)   echo "mobile" ;;
+    *docs*|*doc*|*wiki*)              echo "docs" ;;
+    *test*|*qa*|*e2e*)                echo "qa" ;;
+    *)
+      # Sanitize: lowercase, replace non-alphanumeric with -, trim dashes
+      echo "$dirname" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//'
+      ;;
+  esac
+}
+
+configure_project() {
+  local project_dir="$1"
+  local agent_name="$2"
+  local mcp_path="${project_dir}/.mcp.json"
+
+  local relay_entry="{\"type\":\"http\",\"url\":\"http://localhost:${PORT}/mcp?agent=${agent_name}\"}"
+
+  if [[ -f "$mcp_path" ]]; then
+    # Check if already configured
+    if grep -q "agent-relay" "$mcp_path" 2>/dev/null; then
+      success "${project_dir/#$HOME/~} — already configured"
+      return 0
+    fi
+
+    # Merge into existing .mcp.json using python3 or jq
+    if command -v python3 &>/dev/null; then
+      python3 -c "
+import json, sys
+with open('$mcp_path', 'r') as f:
+    data = json.load(f)
+data.setdefault('mcpServers', {})
+data['mcpServers']['agent-relay'] = json.loads('$relay_entry')
+with open('$mcp_path', 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" 2>/dev/null
+    elif command -v jq &>/dev/null; then
+      local tmp
+      tmp=$(mktemp)
+      jq --argjson entry "$relay_entry" '.mcpServers["agent-relay"] = $entry' "$mcp_path" > "$tmp" && mv "$tmp" "$mcp_path"
+    else
+      warn "No python3 or jq found — cannot safely merge .mcp.json"
+      warn "Manually add agent-relay to ${mcp_path}"
+      return 1
+    fi
+  else
+    # Create new .mcp.json
+    cat > "$mcp_path" <<EOF
+{
+  "mcpServers": {
+    "agent-relay": ${relay_entry}
+  }
+}
+EOF
+  fi
+
+  success "${project_dir/#$HOME/~} → ${CYAN}${agent_name}${RESET}"
+}
+
+# ── Step 5: Verify installation ─────────────────────────────────────────────
+
+verify_installation() {
+  step 5 "Verifying installation"
+
+  local bin_path="${BIN_DIR}/${BINARY_NAME}"
+
+  # Check binary
+  if [[ ! -x "$bin_path" ]]; then
+    error "Binary not found at ${bin_path}"
+    return 1
+  fi
+
+  local version
+  version=$("$bin_path" --version 2>/dev/null || echo "unknown")
+  success "Binary: ${BOLD}${version}${RESET}"
+
+  # Check skill
+  if [[ -f "$HOME/.claude/commands/relay.md" ]]; then
+    success "Skill: /relay command installed"
+  else
+    warn "Skill: not found"
+  fi
+
+  # Check port availability and service status
+  if [[ "$NO_SERVICE" != true ]]; then
+    # Wait a moment for the service to start
+    sleep 1
+
+    local health_ok=false
+    for attempt in 1 2 3; do
+      if curl -sf "http://localhost:${PORT}/health" &>/dev/null || \
+         curl -sf "http://localhost:${PORT}/mcp" &>/dev/null; then
+        health_ok=true
+        break
+      fi
+      sleep 1
+    done
+
+    if [[ "$health_ok" == true ]]; then
+      success "Service: relay running on port ${PORT}"
+    else
+      warn "Service: relay not responding yet (may need a moment to start)"
+      info "Check logs: ${DIM}cat /tmp/agent-relay.log${RESET}"
+    fi
+  fi
+
+  # Check PATH on Linux
+  if [[ "$OS" == "linux" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    echo
+    warn "${BIN_DIR} is not in your PATH"
+    info "Add to your shell profile:"
+    echo "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${RESET}"
+  fi
+}
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+print_summary() {
+  echo
+  echo "${GREEN}${BOLD}  ╔═══════════════════════════════════════╗${RESET}"
+  echo "${GREEN}${BOLD}  ║      Installation complete!            ║${RESET}"
+  echo "${GREEN}${BOLD}  ╚═══════════════════════════════════════╝${RESET}"
+  echo
+  info "The relay is running on ${BOLD}http://localhost:${PORT}${RESET}"
+  echo
+  info "Next steps:"
+  echo "  1. Open Claude Code in any configured project"
+  echo "  2. Use ${BOLD}/relay${RESET} to check your inbox"
+  echo "  3. Use ${BOLD}/relay send <agent> <message>${RESET} to talk to another agent"
+  echo
+  info "Add relay to more projects by adding to ${BOLD}.mcp.json${RESET}:"
+  echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp?agent=NAME\"}}}${RESET}"
+  echo
+  info "Uninstall: ${DIM}curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --uninstall${RESET}"
+  echo
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+main() {
+  parse_args "$@"
+  detect_platform
+
+  if [[ "$UNINSTALL" == true ]]; then
+    do_uninstall
+  fi
+
+  banner
+
+  # Check port conflict
+  if lsof -i ":${PORT}" &>/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
+    local existing_pid
+    existing_pid=$(lsof -t -i ":${PORT}" 2>/dev/null | head -1 || true)
+    if [[ -n "$existing_pid" ]]; then
+      local existing_cmd
+      existing_cmd=$(ps -p "$existing_pid" -o comm= 2>/dev/null || echo "unknown")
+      if [[ "$existing_cmd" == *"agent-relay"* ]]; then
+        info "Relay already running on port ${PORT} (PID ${existing_pid})"
+      else
+        warn "Port ${PORT} is in use by ${BOLD}${existing_cmd}${RESET} (PID ${existing_pid})"
+        warn "Use ${BOLD}--port <number>${RESET} to pick a different port"
+      fi
+    fi
+  fi
+
+  install_binary || warn "Binary install incomplete — see above"
+  install_service
+  install_skill
+  scan_and_configure_projects
+  verify_installation || true
+  print_summary
+}
+
+main "$@"

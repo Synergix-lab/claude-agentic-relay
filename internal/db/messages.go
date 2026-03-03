@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (d *DB) InsertMessage(from, to, msgType, subject, content, metadata string, replyTo, conversationID *string) (*models.Message, error) {
+func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadata string, replyTo, conversationID *string) (*models.Message, error) {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 
 	msg := &models.Message{
@@ -22,11 +22,12 @@ func (d *DB) InsertMessage(from, to, msgType, subject, content, metadata string,
 		Metadata:       metadata,
 		CreatedAt:      now,
 		ConversationID: conversationID,
+		Project:        project,
 	}
 
 	_, err := d.conn.Exec(
-		"INSERT INTO messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		msg.ID, msg.From, msg.To, msg.ReplyTo, msg.Type, msg.Subject, msg.Content, msg.Metadata, msg.CreatedAt, msg.ConversationID,
+		"INSERT INTO messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, conversation_id, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		msg.ID, msg.From, msg.To, msg.ReplyTo, msg.Type, msg.Subject, msg.Content, msg.Metadata, msg.CreatedAt, msg.ConversationID, msg.Project,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert message: %w", err)
@@ -34,24 +35,26 @@ func (d *DB) InsertMessage(from, to, msgType, subject, content, metadata string,
 	return msg, nil
 }
 
-func (d *DB) GetInbox(agentName string, unreadOnly bool, limit int) ([]models.Message, error) {
+func (d *DB) GetInbox(project, agentName string, unreadOnly bool, limit int) ([]models.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project
 		FROM messages
-		WHERE
-			-- Legacy 1-1 and broadcast
-			(conversation_id IS NULL AND (to_agent = ? OR (to_agent = '*' AND from_agent != ?)))
-			-- Conversations where I'm a member
-			OR (conversation_id IS NOT NULL AND conversation_id IN (
-				SELECT conversation_id FROM conversation_members
-				WHERE agent_name = ? AND left_at IS NULL
-			) AND from_agent != ?)
+		WHERE project = ?
+			AND (
+				-- Legacy 1-1 and broadcast
+				(conversation_id IS NULL AND (to_agent = ? OR (to_agent = '*' AND from_agent != ?)))
+				-- Conversations where I'm a member
+				OR (conversation_id IS NOT NULL AND conversation_id IN (
+					SELECT conversation_id FROM conversation_members
+					WHERE agent_name = ? AND left_at IS NULL
+				) AND from_agent != ?)
+			)
 	`
-	args := []any{agentName, agentName, agentName, agentName}
+	args := []any{project, agentName, agentName, agentName, agentName}
 
 	if unreadOnly {
 		query += ` AND (
@@ -89,10 +92,10 @@ func (d *DB) GetThread(messageID string) ([]models.Message, error) {
 	// Get root + all descendants
 	query := `
 		WITH RECURSIVE thread AS (
-			SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id
+			SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project
 			FROM messages WHERE id = ?
 			UNION ALL
-			SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id
+			SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id, m.project
 			FROM messages m
 			JOIN thread t ON m.reply_to = t.id
 		)
@@ -137,7 +140,7 @@ func (d *DB) MarkRead(messageIDs []string, agentName string) (int, error) {
 
 func (d *DB) GetMessage(id string) (*models.Message, error) {
 	msgs, err := d.queryMessages(
-		"SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id FROM messages WHERE id = ?",
+		"SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project FROM messages WHERE id = ?",
 		id,
 	)
 	if err != nil {
@@ -184,7 +187,7 @@ func (d *DB) queryMessages(query string, args ...any) ([]models.Message, error) 
 	var messages []models.Message
 	for rows.Next() {
 		var m models.Message
-		if err := rows.Scan(&m.ID, &m.From, &m.To, &m.ReplyTo, &m.Type, &m.Subject, &m.Content, &m.Metadata, &m.CreatedAt, &m.ReadAt, &m.ConversationID); err != nil {
+		if err := rows.Scan(&m.ID, &m.From, &m.To, &m.ReplyTo, &m.Type, &m.Subject, &m.Content, &m.Metadata, &m.CreatedAt, &m.ReadAt, &m.ConversationID, &m.Project); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		messages = append(messages, m)

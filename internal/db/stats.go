@@ -2,15 +2,53 @@ package db
 
 // Stats holds aggregate relay statistics.
 type Stats struct {
-	Agents       int
-	Messages     int
-	Unread       int
-	Threads      int
-	OldestAgent  string // RFC3339 — earliest registered_at (proxy for uptime)
+	Agents      int
+	Messages    int
+	Unread      int
+	Threads     int
+	OldestAgent string // RFC3339 — earliest registered_at (proxy for uptime)
 }
 
-// GetStats returns aggregate counts from the database.
-func (d *DB) GetStats() (*Stats, error) {
+// GetStats returns aggregate counts from the database for a project.
+func (d *DB) GetStats(project string) (*Stats, error) {
+	s := &Stats{}
+
+	err := d.conn.QueryRow("SELECT COUNT(*) FROM agents WHERE project = ?", project).Scan(&s.Agents)
+	if err != nil {
+		return nil, err
+	}
+
+	err = d.conn.QueryRow("SELECT COUNT(*) FROM messages WHERE project = ?", project).Scan(&s.Messages)
+	if err != nil {
+		return nil, err
+	}
+
+	err = d.conn.QueryRow("SELECT COUNT(*) FROM messages WHERE read_at IS NULL AND project = ?", project).Scan(&s.Unread)
+	if err != nil {
+		return nil, err
+	}
+
+	err = d.conn.QueryRow(`
+		SELECT COUNT(DISTINCT CASE WHEN reply_to IS NULL THEN id ELSE reply_to END)
+		FROM messages
+		WHERE project = ?
+	`, project).Scan(&s.Threads)
+	if err != nil {
+		return nil, err
+	}
+
+	// Oldest agent registration as uptime proxy.
+	var oldest *string
+	err = d.conn.QueryRow("SELECT MIN(registered_at) FROM agents WHERE project = ?", project).Scan(&oldest)
+	if err == nil && oldest != nil {
+		s.OldestAgent = *oldest
+	}
+
+	return s, nil
+}
+
+// GetGlobalStats returns aggregate counts across all projects (for CLI status).
+func (d *DB) GetGlobalStats() (*Stats, error) {
 	s := &Stats{}
 
 	err := d.conn.QueryRow("SELECT COUNT(*) FROM agents").Scan(&s.Agents)
@@ -28,8 +66,6 @@ func (d *DB) GetStats() (*Stats, error) {
 		return nil, err
 	}
 
-	// Count distinct threads: a thread is a root message (reply_to IS NULL) that has at least one reply,
-	// OR we just count distinct root IDs.
 	err = d.conn.QueryRow(`
 		SELECT COUNT(DISTINCT CASE WHEN reply_to IS NULL THEN id ELSE reply_to END)
 		FROM messages
@@ -38,7 +74,6 @@ func (d *DB) GetStats() (*Stats, error) {
 		return nil, err
 	}
 
-	// Oldest agent registration as uptime proxy.
 	var oldest *string
 	err = d.conn.QueryRow("SELECT MIN(registered_at) FROM agents").Scan(&oldest)
 	if err == nil && oldest != nil {

@@ -66,8 +66,8 @@ func startServer() {
 	relay.StartCleanup(database, cleanupDone)
 
 	go func() {
-		log.Printf("listening on %s", addr)
-		if err := r.HTTP.Start(addr); err != nil {
+		log.Printf("listening on %s (UI: http://localhost%s)", addr, addr)
+		if err := r.ListenAndServe(addr); err != nil {
 			log.Printf("server stopped: %v", err)
 		}
 	}()
@@ -75,7 +75,7 @@ func startServer() {
 	<-ctx.Done()
 	close(cleanupDone)
 	log.Println("shutting down...")
-	if err := r.HTTP.Shutdown(context.Background()); err != nil {
+	if err := r.Shutdown(context.Background()); err != nil {
 		log.Printf("shutdown error: %v", err)
 	}
 }

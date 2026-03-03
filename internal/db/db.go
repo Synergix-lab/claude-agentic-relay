@@ -85,11 +85,13 @@ func migrate(conn *sql.DB) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS agents (
 		id            TEXT PRIMARY KEY,
-		name          TEXT NOT NULL UNIQUE,
+		name          TEXT NOT NULL,
 		role          TEXT NOT NULL DEFAULT '',
 		description   TEXT NOT NULL DEFAULT '',
 		registered_at TEXT NOT NULL,
-		last_seen     TEXT NOT NULL
+		last_seen     TEXT NOT NULL,
+		project       TEXT NOT NULL DEFAULT 'default',
+		reports_to    TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS messages (
@@ -102,7 +104,8 @@ func migrate(conn *sql.DB) error {
 		content    TEXT NOT NULL,
 		metadata   TEXT NOT NULL DEFAULT '{}',
 		created_at TEXT NOT NULL,
-		read_at    TEXT
+		read_at    TEXT,
+		project    TEXT NOT NULL DEFAULT 'default'
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_agent);
@@ -116,7 +119,8 @@ func migrate(conn *sql.DB) error {
 		title       TEXT NOT NULL,
 		created_by  TEXT NOT NULL,
 		created_at  TEXT NOT NULL,
-		archived_at TEXT
+		archived_at TEXT,
+		project     TEXT NOT NULL DEFAULT 'default'
 	);
 
 	CREATE TABLE IF NOT EXISTS conversation_members (
@@ -151,6 +155,25 @@ func migrate(conn *sql.DB) error {
 	// ALTER TABLE may fail if column already exists — that's fine.
 	conn.Exec(alterSchema)
 
-	_, err := conn.Exec(alterIndex)
-	return err
+	if _, err := conn.Exec(alterIndex); err != nil {
+		return err
+	}
+
+	// Project isolation migration (idempotent — ALTER fails if column exists).
+	conn.Exec(`ALTER TABLE agents ADD COLUMN project TEXT NOT NULL DEFAULT 'default'`)
+
+	// Hierarchy migration (idempotent — ALTER fails if column exists).
+	conn.Exec(`ALTER TABLE agents ADD COLUMN reports_to TEXT`)
+	conn.Exec(`ALTER TABLE messages ADD COLUMN project TEXT NOT NULL DEFAULT 'default'`)
+	conn.Exec(`ALTER TABLE conversations ADD COLUMN project TEXT NOT NULL DEFAULT 'default'`)
+
+	// Drop the old unique constraint on agents.name (for existing DBs).
+	// SQLite doesn't support DROP INDEX IF EXISTS on auto-created unique indexes,
+	// but creating the composite index is enough — the old UNIQUE won't conflict.
+	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project)`)
+	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project)`)
+	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project)`)
+	conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_name ON agents(project, name)`)
+
+	return nil
 }

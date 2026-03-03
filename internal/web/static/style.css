@@ -1,0 +1,363 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'JetBrains Mono', monospace;
+  background: #0a0a12;
+  color: #e0e0e8;
+  overflow: hidden;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: rgba(15, 15, 26, 0.95);
+  border-bottom: 1px solid rgba(108, 92, 231, 0.2);
+  z-index: 10;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-size: 14px;
+  font-weight: 700;
+  color: #6c5ce7;
+  letter-spacing: 2px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #636e72;
+  transition: background 0.3s;
+}
+
+.status-dot.connected {
+  background: #00e676;
+  box-shadow: 0 0 6px #00e67688;
+}
+
+.agent-count {
+  font-size: 11px;
+  color: #6a6a80;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+select {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: #1a1a2e;
+  color: #e0e0e8;
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  min-width: 280px;
+  max-width: 450px;
+  text-overflow: ellipsis;
+}
+
+select:hover {
+  border-color: rgba(108, 92, 231, 0.6);
+}
+
+select option {
+  background: #1a1a2e;
+  color: #e0e0e8;
+}
+
+#project-select {
+  min-width: 140px;
+  max-width: 200px;
+  font-weight: 600;
+  color: #6c5ce7;
+  border-color: rgba(108, 92, 231, 0.4);
+}
+
+/* Main layout */
+main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+#canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#relay-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Messages Panel */
+#messages-panel {
+  width: 320px;
+  background: rgba(15, 15, 26, 0.95);
+  border-left: 1px solid rgba(108, 92, 231, 0.15);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+#messages-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(108, 92, 231, 0.15);
+  font-size: 12px;
+  font-weight: 600;
+  color: #6c5ce7;
+}
+
+#messages-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.msg-item {
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: rgba(30, 30, 50, 0.6);
+  font-size: 11px;
+  line-height: 1.5;
+  animation: msg-fade-in 0.3s ease;
+}
+
+.msg-item:hover {
+  background: rgba(40, 40, 60, 0.8);
+}
+
+.msg-from {
+  font-weight: 600;
+  color: #00e676;
+  margin-right: 6px;
+}
+
+.msg-subject {
+  color: #a29bfe;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.msg-content {
+  color: #c0c0d0;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: hidden;
+}
+
+.msg-conv-tag {
+  display: inline-block;
+  font-size: 9px;
+  color: #6c5ce7;
+  background: rgba(108, 92, 231, 0.15);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 4px;
+  font-weight: 600;
+}
+
+.msg-time {
+  font-size: 9px;
+  color: #4a4a60;
+  margin-top: 4px;
+}
+
+.msg-empty {
+  text-align: center;
+  color: #4a4a60;
+  padding: 40px 16px;
+  font-size: 11px;
+}
+
+@keyframes msg-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Agent Detail Panel */
+.detail-panel {
+  position: fixed;
+  right: -360px;
+  top: 48px;
+  bottom: 0;
+  width: 340px;
+  background: rgba(15, 15, 26, 0.98);
+  border-left: 1px solid rgba(108, 92, 231, 0.3);
+  padding: 20px;
+  transition: right 0.3s ease;
+  z-index: 20;
+  overflow-y: auto;
+}
+
+.detail-panel.open {
+  right: 0;
+}
+
+#detail-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: #6a6a80;
+  font-size: 20px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+#detail-close:hover {
+  color: #e0e0e8;
+}
+
+.detail-name {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.detail-field {
+  font-size: 11px;
+  color: #6a6a80;
+  margin-bottom: 4px;
+}
+
+.detail-section {
+  margin-top: 16px;
+}
+
+.detail-label {
+  font-size: 9px;
+  color: #4a4a60;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 4px;
+}
+
+.detail-value {
+  font-size: 12px;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(108, 92, 231, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(108, 92, 231, 0.5);
+}
+
+/* User questions notification area */
+.user-questions-panel {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 400px;
+}
+
+.user-question-card {
+  background: rgba(20, 20, 40, 0.95);
+  border: 1px solid rgba(108, 92, 231, 0.4);
+  border-radius: 8px;
+  padding: 12px 16px;
+  animation: msg-fade-in 0.3s ease;
+}
+
+.user-question-card .uq-from { color: #00e676; font-weight: 600; font-size: 11px; }
+.user-question-card .uq-subject { color: #a29bfe; font-weight: 600; font-size: 12px; margin: 4px 0; }
+.user-question-card .uq-content { color: #c0c0d0; font-size: 11px; margin-bottom: 8px; }
+.user-question-card textarea {
+  width: 100%;
+  background: #1a1a2e;
+  color: #e0e0e8;
+  border: 1px solid rgba(108, 92, 231, 0.3);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  resize: vertical;
+  min-height: 40px;
+}
+.user-question-card button {
+  margin-top: 6px;
+  background: #6c5ce7;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+}
+.user-question-card button:hover { background: #7d6ff0; }
+
+/* Hierarchy links in detail panel */
+.detail-hierarchy-link {
+  color: #6c5ce7;
+  cursor: pointer;
+  text-decoration: none;
+}
+.detail-hierarchy-link:hover {
+  text-decoration: underline;
+  color: #a29bfe;
+}
+
+.detail-reports-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.detail-report-tag {
+  display: inline-block;
+  font-size: 11px;
+  color: #6c5ce7;
+  background: rgba(108, 92, 231, 0.15);
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.detail-report-tag:hover {
+  background: rgba(108, 92, 231, 0.3);
+}

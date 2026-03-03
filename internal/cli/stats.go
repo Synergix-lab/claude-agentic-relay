@@ -6,14 +6,20 @@ import (
 	"time"
 )
 
-func runStats() {
+func runStats(args []string) {
+	project, _ := parseProject(args)
+
 	d := openDB()
 	defer d.Close()
 
-	stats, err := d.GetStats()
+	stats, err := d.GetStats(project)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if project != "default" {
+		fmt.Printf("project: %s\n", project)
 	}
 
 	// Uptime from oldest agent registration.

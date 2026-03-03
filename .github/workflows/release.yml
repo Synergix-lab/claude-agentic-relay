@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os: darwin
+            arch: arm64
+            runner: macos-14
+            cc: ""
+            ext: ""
+          - os: darwin
+            arch: amd64
+            runner: macos-13
+            cc: ""
+            ext: ""
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            cc: gcc
+            ext: ""
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            ext: ""
+          - os: windows
+            arch: amd64
+            runner: ubuntu-latest
+            cc: x86_64-w64-mingw32-gcc
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install cross-compilers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 1
+          CC: ${{ matrix.cc }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          go build -ldflags="-s -w -X main.Version=${VERSION}" -o "agent-relay${{ matrix.ext }}" .
+
+      - name: Package (tar.gz)
+        if: matrix.os != 'windows'
+        run: |
+          tar -czf "agent-relay-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" agent-relay
+
+      - name: Package (zip)
+        if: matrix.os == 'windows'
+        run: |
+          zip "agent-relay-${{ matrix.os }}-${{ matrix.arch }}.zip" "agent-relay${{ matrix.ext }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-relay-${{ matrix.os }}-${{ matrix.arch }}
+          path: agent-relay-${{ matrix.os }}-${{ matrix.arch }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes \
+            artifacts/agent-relay-*.tar.gz \
+            artifacts/agent-relay-*.zip \
+            install.sh \
+            install.ps1

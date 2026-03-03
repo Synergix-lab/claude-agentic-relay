@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Relay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header id="header">
+    <div class="header-left">
+      <span class="logo">AGENT RELAY</span>
+      <span id="status-dot" class="status-dot"></span>
+      <span id="agent-count" class="agent-count">0 agents</span>
+    </div>
+    <div class="header-right">
+      <select id="project-select">
+        <option value="default">default</option>
+      </select>
+      <select id="conv-select">
+        <option value="">-- All conversations --</option>
+      </select>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="canvas-container">
+      <canvas id="relay-canvas"></canvas>
+    </div>
+    <div id="messages-panel">
+      <div id="messages-header">
+        <span id="messages-title">Messages</span>
+      </div>
+      <div id="messages-list"></div>
+    </div>
+  </main>
+
+  <div id="agent-detail" class="detail-panel">
+    <button id="detail-close">&times;</button>
+    <div id="detail-name" class="detail-name"></div>
+    <div id="detail-role" class="detail-field"></div>
+    <div id="detail-desc" class="detail-field"></div>
+    <div class="detail-section">
+      <div class="detail-label">Status</div>
+      <div id="detail-status" class="detail-value"></div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Last Seen</div>
+      <div id="detail-last-seen" class="detail-value"></div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Registered</div>
+      <div id="detail-registered" class="detail-value"></div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Reports To</div>
+      <div id="detail-reports-to" class="detail-value"></div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-label">Direct Reports</div>
+      <div id="detail-direct-reports" class="detail-value"></div>
+    </div>
+  </div>
+
+  <div id="user-questions" class="user-questions-panel"></div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

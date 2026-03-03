@@ -23,7 +23,7 @@ func Run(args []string) {
 	case "status":
 		runStatus()
 	case "agents":
-		runAgents()
+		runAgents(rest)
 	case "inbox":
 		runInbox(rest)
 	case "send":
@@ -31,7 +31,7 @@ func Run(args []string) {
 	case "thread":
 		runThread(rest)
 	case "stats":
-		runStats()
+		runStats(rest)
 	case "conversations":
 		runConversations(rest)
 	default:
@@ -39,6 +39,21 @@ func Run(args []string) {
 		printUsage()
 		os.Exit(1)
 	}
+}
+
+// parseProject extracts -p <value> from args. Returns (project, remaining args).
+func parseProject(args []string) (string, []string) {
+	project := "default"
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "-p" || args[i] == "--project") && i+1 < len(args) {
+			project = args[i+1]
+			i++ // skip value
+		} else {
+			rest = append(rest, args[i])
+		}
+	}
+	return project, rest
 }
 
 // openDB opens the database in read-only mode, printing a user-friendly
@@ -69,20 +84,21 @@ func openDBReadWrite() *db.DB {
 }
 
 func printUsage() {
-	fmt.Print(`usage: agent-relay <command>
+	fmt.Print(`usage: agent-relay <command> [-p <project>]
 
 commands:
-  serve               start the relay server
-  status              relay status & summary
-  agents              list registered agents
-  inbox <agent>       show unread messages for agent
-  send <from> <to> <msg>  send a message
-  thread <id>         show full message thread
-  conversations <agent>  list conversations for agent
-  stats               global statistics
+  serve                        start the relay server
+  status                       relay status & summary
+  agents [-p project]          list registered agents
+  inbox [-p project] <agent>   show unread messages for agent
+  send [-p project] <from> <to> <msg>  send a message
+  thread <id>                  show full message thread
+  conversations [-p project] <agent>  list conversations for agent
+  stats [-p project]           global statistics
 
 flags:
-  --version           show version
-  --help              show this help
+  -p, --project <name>   filter by project (default: "default")
+  --version              show version
+  --help                 show this help
 `)
 }

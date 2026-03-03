@@ -21,28 +21,31 @@ func NewHandlers(db *db.DB, registry *SessionRegistry) *Handlers {
 }
 
 func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
 	name := req.GetString("name", "")
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
 	}
 	role := req.GetString("role", "")
 	description := req.GetString("description", "")
+	reportsTo := optionalString(req.GetString("reports_to", ""))
 
-	agent, err := h.db.RegisterAgent(name, role, description)
+	agent, err := h.db.RegisterAgent(project, name, role, description, reportsTo)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to register agent: %v", err)), nil
 	}
 
 	// Register the session for push notifications
 	if sess := sessionFromContext(ctx); sess != nil {
-		h.registry.Register(name, sess.SessionID())
+		h.registry.Register(project, name, sess.SessionID())
 	}
 
 	return resultJSON(agent)
 }
 
 func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	from := AgentFromContext(ctx)
+	project := resolveProject(ctx, req)
+	from := resolveAgent(ctx, req)
 	to := req.GetString("to", "")
 	msgType := req.GetString("type", "notification")
 	subject := req.GetString("subject", "")
@@ -56,7 +59,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 	conversationID := optionalString(req.GetString("conversation_id", ""))
 
 	// Touch sender's last_seen
-	_ = h.db.TouchAgent(from)
+	_ = h.db.TouchAgent(project, from)
 
 	if conversationID != nil {
 		// Conversation message — validate membership
@@ -72,31 +75,32 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError("to is required (or provide conversation_id)"), nil
 	}
 
-	msg, err := h.db.InsertMessage(from, to, msgType, subject, content, metadata, replyTo, conversationID)
+	msg, err := h.db.InsertMessage(project, from, to, msgType, subject, content, metadata, replyTo, conversationID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to send message: %v", err)), nil
 	}
 
 	// Push notification
 	if conversationID != nil {
-		h.notifyConversation(*conversationID, from, subject, msg.ID)
+		h.notifyConversation(project, *conversationID, from, subject, msg.ID)
 	} else if to == "*" {
-		h.registry.NotifyBroadcast(from, subject, msg.ID)
+		h.registry.NotifyBroadcast(project, from, subject, msg.ID)
 	} else {
-		h.registry.Notify(to, from, subject, msg.ID)
+		h.registry.Notify(project, to, from, subject, msg.ID)
 	}
 
 	return resultJSON(msg)
 }
 
 func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := AgentFromContext(ctx)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	unreadOnly := req.GetBool("unread_only", true)
-	limit := req.GetInt("limit", 50)
+	limit := req.GetInt("limit", 10)
 
-	_ = h.db.TouchAgent(agent)
+	_ = h.db.TouchAgent(project, agent)
 
-	messages, err := h.db.GetInbox(agent, unreadOnly, limit)
+	messages, err := h.db.GetInbox(project, agent, unreadOnly, limit)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get inbox: %v", err)), nil
 	}
@@ -104,10 +108,35 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 		messages = []models.Message{}
 	}
 
+	// Truncate content to keep response compact
+	truncated := make([]map[string]any, len(messages))
+	for i, m := range messages {
+		content := m.Content
+		if len(content) > 300 {
+			content = content[:300] + "..."
+		}
+		entry := map[string]any{
+			"id":         m.ID,
+			"from":       m.From,
+			"to":         m.To,
+			"type":       m.Type,
+			"subject":    m.Subject,
+			"content":    content,
+			"created_at": m.CreatedAt,
+		}
+		if m.ReplyTo != nil {
+			entry["reply_to"] = *m.ReplyTo
+		}
+		if m.ConversationID != nil {
+			entry["conversation_id"] = *m.ConversationID
+		}
+		truncated[i] = entry
+	}
+
 	return resultJSON(map[string]any{
 		"agent":    agent,
 		"count":    len(messages),
-		"messages": messages,
+		"messages": truncated,
 	})
 }
 
@@ -132,7 +161,9 @@ func (h *Handlers) HandleGetThread(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleListAgents(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agents, err := h.db.ListAgents()
+	project := resolveProject(ctx, req)
+
+	agents, err := h.db.ListAgents(project)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list agents: %v", err)), nil
 	}
@@ -147,7 +178,7 @@ func (h *Handlers) HandleListAgents(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := AgentFromContext(ctx)
+	agent := resolveAgent(ctx, req)
 
 	// Support marking a whole conversation as read
 	convID := req.GetString("conversation_id", "")
@@ -177,7 +208,8 @@ func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) 
 }
 
 func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := AgentFromContext(ctx)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	title := req.GetString("title", "")
 	if title == "" {
 		return mcp.NewToolResultError("title is required"), nil
@@ -200,7 +232,7 @@ func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToo
 		members = append([]string{agent}, members...)
 	}
 
-	conv, err := h.db.CreateConversation(title, agent, members)
+	conv, err := h.db.CreateConversation(project, title, agent, members)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create conversation: %v", err)), nil
 	}
@@ -212,9 +244,10 @@ func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToo
 }
 
 func (h *Handlers) HandleListConversations(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := AgentFromContext(ctx)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 
-	convs, err := h.db.ListConversations(agent)
+	convs, err := h.db.ListConversations(project, agent)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list conversations: %v", err)), nil
 	}
@@ -230,7 +263,7 @@ func (h *Handlers) HandleListConversations(ctx context.Context, req mcp.CallTool
 }
 
 func (h *Handlers) HandleGetConversationMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := AgentFromContext(ctx)
+	agent := resolveAgent(ctx, req)
 	convID := req.GetString("conversation_id", "")
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
@@ -262,7 +295,8 @@ func (h *Handlers) HandleGetConversationMessages(ctx context.Context, req mcp.Ca
 }
 
 func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := AgentFromContext(ctx)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	convID := req.GetString("conversation_id", "")
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
@@ -286,7 +320,7 @@ func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallT
 	}
 
 	// Notify the invitee
-	h.registry.Notify(invitee, agent, fmt.Sprintf("You were invited to conversation: %s", convID), "")
+	h.registry.Notify(project, invitee, agent, fmt.Sprintf("You were invited to conversation: %s", convID), "")
 
 	return resultJSON(map[string]any{
 		"conversation_id": convID,
@@ -294,16 +328,34 @@ func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallT
 	})
 }
 
-func (h *Handlers) notifyConversation(conversationID, senderName, subject, messageID string) {
+func (h *Handlers) notifyConversation(project, conversationID, senderName, subject, messageID string) {
 	members, err := h.db.GetConversationMembers(conversationID)
 	if err != nil {
 		return
 	}
 	for _, m := range members {
 		if m.AgentName != senderName {
-			h.registry.Notify(m.AgentName, senderName, subject, messageID)
+			h.registry.Notify(project, m.AgentName, senderName, subject, messageID)
 		}
 	}
+}
+
+// resolveProject returns the project from the `project` tool parameter if set,
+// otherwise falls back to the ?project= URL parameter from the connection.
+func resolveProject(ctx context.Context, req mcp.CallToolRequest) string {
+	if p := req.GetString("project", ""); p != "" {
+		return p
+	}
+	return ProjectFromContext(ctx)
+}
+
+// resolveAgent returns the agent name from the `as` parameter if set,
+// otherwise falls back to the ?agent= URL parameter from the connection.
+func resolveAgent(ctx context.Context, req mcp.CallToolRequest) string {
+	if as := req.GetString("as", ""); as != "" {
+		return as
+	}
+	return AgentFromContext(ctx)
 }
 
 // helpers

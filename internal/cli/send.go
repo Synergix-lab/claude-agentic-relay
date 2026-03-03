@@ -7,14 +7,16 @@ import (
 )
 
 func runSend(args []string) {
-	if len(args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: agent-relay send <from> <to> <message>")
+	project, rest := parseProject(args)
+
+	if len(rest) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: agent-relay send [-p project] <from> <to> <message>")
 		os.Exit(1)
 	}
 
-	from := args[0]
-	to := args[1]
-	content := strings.Join(args[2:], " ")
+	from := rest[0]
+	to := rest[1]
+	content := strings.Join(rest[2:], " ")
 
 	// Derive subject from first few words.
 	subject := deriveSubject(content)
@@ -29,7 +31,7 @@ func runSend(args []string) {
 	d := openDBReadWrite()
 	defer d.Close()
 
-	msg, err := d.InsertMessage(from, to, msgType, subject, content, "{}", nil, nil)
+	msg, err := d.InsertMessage(project, from, to, msgType, subject, content, "{}", nil, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

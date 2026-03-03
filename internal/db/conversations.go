@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (d *DB) CreateConversation(title, createdBy string, memberNames []string) (*models.Conversation, error) {
+func (d *DB) CreateConversation(project, title, createdBy string, memberNames []string) (*models.Conversation, error) {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 
 	conv := &models.Conversation{
@@ -16,6 +16,7 @@ func (d *DB) CreateConversation(title, createdBy string, memberNames []string) (
 		Title:     title,
 		CreatedBy: createdBy,
 		CreatedAt: now,
+		Project:   project,
 	}
 
 	tx, err := d.conn.Begin()
@@ -25,8 +26,8 @@ func (d *DB) CreateConversation(title, createdBy string, memberNames []string) (
 	defer tx.Rollback()
 
 	if _, err := tx.Exec(
-		"INSERT INTO conversations (id, title, created_by, created_at) VALUES (?, ?, ?, ?)",
-		conv.ID, conv.Title, conv.CreatedBy, conv.CreatedAt,
+		"INSERT INTO conversations (id, title, created_by, created_at, project) VALUES (?, ?, ?, ?, ?)",
+		conv.ID, conv.Title, conv.CreatedBy, conv.CreatedAt, conv.Project,
 	); err != nil {
 		return nil, fmt.Errorf("insert conversation: %w", err)
 	}
@@ -47,7 +48,7 @@ func (d *DB) CreateConversation(title, createdBy string, memberNames []string) (
 	return conv, nil
 }
 
-func (d *DB) ListConversations(agentName string) ([]models.ConversationSummary, error) {
+func (d *DB) ListConversations(project, agentName string) ([]models.ConversationSummary, error) {
 	query := `
 		SELECT c.id, c.title, c.created_by, c.created_at,
 			(SELECT COUNT(*) FROM conversation_members WHERE conversation_id = c.id AND left_at IS NULL) AS member_count,
@@ -61,11 +62,11 @@ func (d *DB) ListConversations(agentName string) ([]models.ConversationSummary, 
 			) AS unread_count
 		FROM conversations c
 		JOIN conversation_members cm ON cm.conversation_id = c.id
-		WHERE cm.agent_name = ? AND cm.left_at IS NULL AND c.archived_at IS NULL
+		WHERE cm.agent_name = ? AND cm.left_at IS NULL AND c.archived_at IS NULL AND c.project = ?
 		ORDER BY c.created_at DESC
 	`
 
-	rows, err := d.conn.Query(query, agentName, agentName, agentName)
+	rows, err := d.conn.Query(query, agentName, agentName, agentName, project)
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
 	}
@@ -77,6 +78,7 @@ func (d *DB) ListConversations(agentName string) ([]models.ConversationSummary, 
 		if err := rows.Scan(&cs.ID, &cs.Title, &cs.CreatedBy, &cs.CreatedAt, &cs.MemberCount, &cs.UnreadCount); err != nil {
 			return nil, fmt.Errorf("scan conversation: %w", err)
 		}
+		cs.Project = project
 		convs = append(convs, cs)
 	}
 	return convs, rows.Err()
@@ -88,7 +90,7 @@ func (d *DB) GetConversationMessages(conversationID string, limit int) ([]models
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project
 		FROM messages
 		WHERE conversation_id = ?
 		ORDER BY created_at ASC

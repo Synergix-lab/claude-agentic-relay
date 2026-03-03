@@ -6,16 +6,18 @@ import (
 )
 
 func runInbox(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: agent-relay inbox <agent>")
+	project, rest := parseProject(args)
+
+	if len(rest) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: agent-relay inbox [-p project] <agent>")
 		os.Exit(1)
 	}
 
-	agent := args[0]
+	agent := rest[0]
 	d := openDB()
 	defer d.Close()
 
-	messages, err := d.GetInbox(agent, true, 50)
+	messages, err := d.GetInbox(project, agent, true, 50)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

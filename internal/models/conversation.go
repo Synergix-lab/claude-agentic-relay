@@ -6,6 +6,7 @@ type Conversation struct {
 	CreatedBy  string  `json:"created_by"`
 	CreatedAt  string  `json:"created_at"`
 	ArchivedAt *string `json:"archived_at,omitempty"`
+	Project    string  `json:"project"`
 }
 
 type ConversationMember struct {
@@ -22,4 +23,5 @@ type ConversationSummary struct {
 	CreatedAt   string `json:"created_at"`
 	MemberCount int    `json:"member_count"`
 	UnreadCount int    `json:"unread_count"`
+	Project     string `json:"project"`
 }

@@ -29,13 +29,13 @@ func runStatus() {
 	}
 	defer d.Close()
 
-	stats, err := d.GetStats()
+	stats, err := d.GetGlobalStats()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading stats: %v\n", err)
 		return
 	}
 
-	agents, _ := d.ListAgents()
+	agents, _ := d.ListAgents("default")
 	if len(agents) > 0 {
 		var online, offline []string
 		for _, a := range agents {
@@ -59,6 +59,12 @@ func runStatus() {
 	}
 
 	fmt.Printf("unread: %d messages\n", stats.Unread)
+
+	// Show projects
+	projects, _ := d.ListProjects()
+	if len(projects) > 0 {
+		fmt.Printf("projects: %s\n", strings.Join(projects, ", "))
+	}
 }
 
 func isListening(port string) bool {

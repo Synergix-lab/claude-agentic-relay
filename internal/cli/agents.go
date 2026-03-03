@@ -2,11 +2,13 @@ package cli
 
 import "fmt"
 
-func runAgents() {
+func runAgents(args []string) {
+	project, _ := parseProject(args)
+
 	d := openDB()
 	defer d.Close()
 
-	agents, err := d.ListAgents()
+	agents, err := d.ListAgents(project)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		return

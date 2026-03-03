@@ -12,4 +12,5 @@ type Message struct {
 	CreatedAt      string  `json:"created_at"`
 	ReadAt         *string `json:"read_at"`
 	ConversationID *string `json:"conversation_id,omitempty"`
+	Project        string  `json:"project"`
 }
