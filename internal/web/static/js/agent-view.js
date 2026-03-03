@@ -3,12 +3,13 @@ import { Bubble } from "./bubble.js";
 import { ParticleEmitter } from "./particles.js";
 
 export class AgentView {
-  constructor(name, role, description, paletteIndex, online) {
+  constructor(name, role, description, paletteIndex, online, project) {
     this.name = name;
     this.role = role;
     this.description = description;
     this.paletteIndex = paletteIndex;
     this.online = online;
+    this.project = project || "default";
 
     this.x = 0;
     this.y = 0;
@@ -117,6 +118,13 @@ export class AgentView {
       ctx.fillStyle = "rgba(224,224,232,0.4)";
       const shortRole = this.role.length > 25 ? this.role.slice(0, 23) + "..." : this.role;
       ctx.fillText(shortRole, this.x, this.y + 48);
+    }
+
+    // Project tag (below role, only when multiple projects exist)
+    if (this.showProjectTag && this.project) {
+      ctx.font = "8px 'JetBrains Mono', monospace";
+      ctx.fillStyle = "rgba(108, 92, 231, 0.45)";
+      ctx.fillText(this.project, this.x, this.y + 58);
     }
 
     ctx.restore();

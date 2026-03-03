@@ -1,3 +1,5 @@
+import { Camera } from "./camera.js";
+
 export class CanvasEngine {
   constructor(canvasEl) {
     this.canvas = canvasEl;
@@ -5,6 +7,7 @@ export class CanvasEngine {
     this.renderables = [];
     this.running = false;
     this.lastTime = 0;
+    this.camera = new Camera();
 
     this.resize();
     window.addEventListener("resize", () => this.resize());
@@ -42,14 +45,28 @@ export class CanvasEngine {
     const dt = (now - this.lastTime) / 1000;
     this.lastTime = now;
 
-    this.ctx.clearRect(0, 0, this.width, this.height);
+    const { ctx, width: w, height: h } = this;
+    ctx.clearRect(0, 0, w, h);
 
-    // Sort by y for depth
+    // Update camera
+    this.camera.update(dt);
+
+    // Sort by y for depth (use world-space y)
     this.renderables.sort((a, b) => (a.y ?? 0) - (b.y ?? 0));
 
     for (const r of this.renderables) {
       if (r.update) r.update(dt);
-      if (r.render) r.render(this.ctx, this.width, this.height);
+
+      if (r.isBackground) {
+        // Render backgrounds without camera transform (fills viewport)
+        if (r.render) r.render(ctx, w, h);
+      } else {
+        // Render world-space objects with camera transform
+        ctx.save();
+        this.camera.apply(ctx, w, h);
+        if (r.render) r.render(ctx, w, h);
+        ctx.restore();
+      }
     }
 
     requestAnimationFrame(() => this._frame());
