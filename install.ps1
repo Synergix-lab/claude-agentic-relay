@@ -202,6 +202,11 @@ function Install-Binary {
 
     Write-Ok "Installed $version"
 
+    # Create ar.cmd shortcut
+    $arCmd = Join-Path $InstallDir "ar.cmd"
+    "@echo off`r`n`"%~dp0agent-relay.exe`" %*" | Set-Content $arCmd
+    Write-Ok "Created ar shortcut"
+
     # Add to PATH if not already there
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($userPath -notlike "*$InstallDir*") {

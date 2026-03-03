@@ -181,8 +181,17 @@ do_uninstall() {
     fi
   fi
 
-  # Remove binary
+  # Remove binary and ar symlink
   local bin_path="${BIN_DIR}/${BINARY_NAME}"
+  local ar_path="${BIN_DIR}/ar"
+  if [[ -L "$ar_path" ]] && [[ "$(readlink "$ar_path")" == "$bin_path" ]]; then
+    if [[ -w "$(dirname "$ar_path")" ]]; then
+      rm -f "$ar_path"
+    else
+      sudo rm -f "$ar_path"
+    fi
+    success "Removed ar symlink"
+  fi
   if [[ -f "$bin_path" ]]; then
     if [[ -w "$bin_path" ]] || [[ -w "$(dirname "$bin_path")" ]]; then
       rm -f "$bin_path"
@@ -220,6 +229,31 @@ do_uninstall() {
   echo
   success "${BOLD}Uninstall complete${RESET}"
   exit 0
+}
+
+# ── Symlink ──────────────────────────────────────────────────────────────────
+
+create_ar_symlink() {
+  local bin_path="$1"
+  local bin_dir
+  bin_dir=$(dirname "$bin_path")
+  local ar_path="${bin_dir}/ar"
+
+  # Don't overwrite if 'ar' is something else (e.g. GNU ar archiver)
+  if command -v ar &>/dev/null; then
+    local existing
+    existing=$(command -v ar)
+    if [[ "$existing" != "$ar_path" ]]; then
+      # ar exists and it's not our symlink — skip
+      return 0
+    fi
+  fi
+
+  if [[ -w "$bin_dir" ]]; then
+    ln -sf "$bin_path" "$ar_path"
+  else
+    sudo ln -sf "$bin_path" "$ar_path" 2>/dev/null || true
+  fi
 }
 
 # ── Step 1: Install binary ──────────────────────────────────────────────────
@@ -263,6 +297,8 @@ install_binary() {
       install -m 755 "$tmp_bin" "$bin_path"
     fi
     rm -f "$tmp_bin"
+    # Create 'ar' shortcut symlink
+    create_ar_symlink "$bin_path"
     success "Built and installed from source"
     return 0
   fi
@@ -353,6 +389,8 @@ download_prebuilt() {
   fi
 
   rm -rf "$tmpdir"
+  # Create 'ar' shortcut symlink
+  create_ar_symlink "$bin_path"
   success "Installed ${BOLD}${version}${RESET} from prebuilt"
 }
 
@@ -745,6 +783,12 @@ verify_installation() {
   version=$("$bin_path" --version 2>/dev/null || echo "unknown")
   success "Binary: ${BOLD}${version}${RESET}"
 
+  # Check ar symlink
+  local ar_path="${BIN_DIR}/ar"
+  if [[ -L "$ar_path" ]]; then
+    success "Shortcut: ${BOLD}ar${RESET} → agent-relay"
+  fi
+
   # Check skill
   if [[ -f "$HOME/.claude/commands/relay.md" ]]; then
     success "Skill: /relay command installed"
@@ -798,6 +842,8 @@ print_summary() {
   echo "  1. Open Claude Code in any configured project"
   echo "  2. Use ${BOLD}/relay${RESET} to check your inbox"
   echo "  3. Use ${BOLD}/relay send <agent> <message>${RESET} to talk to another agent"
+  echo
+  info "CLI shortcut: ${BOLD}ar serve${RESET}, ${BOLD}ar status${RESET}, ${BOLD}ar agents${RESET} (alias for agent-relay)"
   echo
   info "Add relay to more projects by adding to ${BOLD}.mcp.json${RESET}:"
   echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp?agent=NAME\"}}}${RESET}"

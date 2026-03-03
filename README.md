@@ -186,7 +186,7 @@ Change `?agent=backend` to whatever name makes sense — `frontend`, `infra`, `m
 
 ```bash
 # 1. Check the relay is running
-agent-relay status
+ar status
 # relay: running (:8090)
 # agents: 0
 # unread: 0 messages
@@ -209,47 +209,47 @@ agent-relay status
 
 ## CLI
 
-The binary is both server and client. CLI commands read directly from SQLite (no running server needed for reads).
+The binary is both server and client. The `ar` shortcut is installed automatically.
 
 ```
-agent-relay                     # start server (default, backward compat)
-agent-relay serve               # start server (explicit)
-agent-relay --version           # version
-agent-relay --help              # help
-
-agent-relay status              # relay running? agents, unread count
-agent-relay agents              # list agents (table)
-agent-relay inbox <agent>       # unread messages for agent
-agent-relay send <from> <to> <msg>  # send a message
-agent-relay thread <id>         # show thread (supports short IDs)
-agent-relay conversations <agent>   # list conversations for agent
-agent-relay stats               # global statistics
+ar serve                        # start server
+ar status                       # relay running? agents, unread count
+ar agents                       # list agents (table)
+ar inbox <agent>                # unread messages for agent
+ar send <from> <to> <msg>       # send a message
+ar thread <id>                  # show thread (supports short IDs)
+ar conversations <agent>        # list conversations for agent
+ar stats                        # global statistics
+ar --version                    # version
+ar --help                       # help
 ```
+
+> `ar` is a symlink to `agent-relay` — both names work. CLI commands read directly from SQLite (no running server needed for reads).
 
 ### Examples
 
 ```bash
-$ agent-relay status
+$ ar status
 relay: running (:8090)
 agents: 3 (backend, frontend, infra)
 unread: 7 messages
 
-$ agent-relay agents
+$ ar agents
 NAME        ROLE                    LAST SEEN
 backend     FastAPI developer       2m ago
 frontend    Next.js developer       5m ago
 infra       DevOps engineer         1h ago
 
-$ agent-relay inbox backend
+$ ar inbox backend
 3 unread:
   [question] frontend → "API contract for UserProfile?"  (2m ago)  id:abc12345
   [notification] infra → "Redis cache deployed"  (15m ago)  id:def45678
   [task] frontend → "Add CORS headers"  (1h ago)  id:ghi78901
 
-$ agent-relay send backend frontend "UserProfile: name, email, avatar_url, role"
+$ ar send backend frontend "UserProfile: name, email, avatar_url, role"
 ok → frontend (id:xyz78901)
 
-$ agent-relay thread abc12345
+$ ar thread abc12345
 thread: 3 messages
 
   abc12345 frontend → backend  [question]  (5m ago)
@@ -261,7 +261,7 @@ thread: 3 messages
   fed98765 frontend → backend  [notification]  (1m ago)
   Confirmed: Updated UserProfile component to match
 
-$ agent-relay stats
+$ ar stats
 uptime: 3d 14h
 agents: 3 registered
 messages: 47 total, 7 unread
@@ -504,7 +504,7 @@ systemctl --user status agent-relay
 journalctl --user -u agent-relay
 
 # Quick check
-agent-relay status
+ar status
 
 # Uninstall
 curl -fsSL https://raw.githubusercontent.com/Synergix-lab/claude-agentic-relay/main/install.sh | bash -s -- --uninstall
