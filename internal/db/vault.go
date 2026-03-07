@@ -86,9 +86,10 @@ func (d *DB) DeleteVaultDoc(project, path string) error {
 }
 
 func (d *DB) GetVaultDoc(project, path string) (*models.VaultDoc, error) {
+	// Try project-specific first, then fall back to _relay
 	doc, err := scanVaultDoc(d.conn.QueryRow(
-		"SELECT "+vaultDocColumns+" FROM vault_docs WHERE project = ? AND path = ?",
-		project, path,
+		"SELECT "+vaultDocColumns+" FROM vault_docs WHERE project IN (?, '_relay') AND path = ? ORDER BY CASE WHEN project = ? THEN 0 ELSE 1 END LIMIT 1",
+		project, path, project,
 	))
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -112,7 +113,7 @@ func (d *DB) SearchVault(project, query string, tags []string, limit int) ([]mod
 		FROM vault_docs_fts
 		JOIN vault_docs vd ON vd.rowid = vault_docs_fts.rowid
 		WHERE vault_docs_fts MATCH ?
-		AND vd.project = ?`
+		AND vd.project IN (?, '_relay')`
 
 	args := []any{query, project}
 
@@ -148,7 +149,7 @@ func (d *DB) ListVaultDocs(project string, tags []string, limit int) ([]models.V
 		limit = 100
 	}
 
-	q := "SELECT " + vaultDocColumns + " FROM vault_docs WHERE project = ?"
+	q := "SELECT " + vaultDocColumns + " FROM vault_docs WHERE project IN (?, '_relay')"
 	args := []any{project}
 
 	if len(tags) > 0 {

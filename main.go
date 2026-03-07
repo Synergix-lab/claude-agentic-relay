@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"agent-relay/docs"
 	"agent-relay/internal/cli"
 	"agent-relay/internal/db"
 	"agent-relay/internal/ingest"
@@ -65,6 +66,7 @@ func startServer() {
 
 	// Start vault watcher (loads configs from DB)
 	vaultWatcher := vault.New(database)
+	vaultWatcher.IndexEmbedded(docs.Files)
 	vaultWatcher.Start()
 	defer vaultWatcher.Stop()
 

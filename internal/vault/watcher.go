@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -72,6 +73,58 @@ func (w *Watcher) AddVault(cfg models.VaultConfig) {
 
 func (w *Watcher) Stop() {
 	w.cancel()
+}
+
+// IndexEmbedded indexes embedded markdown docs into the _relay project.
+// These docs are available to all projects via search_vault / get_vault_doc.
+func (w *Watcher) IndexEmbedded(fsys fs.FS) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		log.Printf("[vault] failed to read embedded docs: %v", err)
+		return
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		data, err := fs.ReadFile(fsys, entry.Name())
+		if err != nil {
+			log.Printf("[vault] failed to read embedded %s: %v", entry.Name(), err)
+			continue
+		}
+		content := string(data)
+		fm := parseFrontmatter(content)
+		body := stripFrontmatter(content)
+		title := fm["title"]
+		if title == "" {
+			title = extractFirstH1(body)
+		}
+		if title == "" {
+			title = strings.TrimSuffix(entry.Name(), ".md")
+		}
+		tagsJSON := "[]"
+		if t, ok := fm["tags"]; ok {
+			tagsJSON = t
+		}
+		doc := &models.VaultDoc{
+			Path:      entry.Name(),
+			Project:   "_relay",
+			Title:     title,
+			Owner:     "relay",
+			Status:    "",
+			Tags:      tagsJSON,
+			Content:   body,
+			SizeBytes: len(data),
+			UpdatedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		}
+		if err := w.db.UpsertVaultDoc(doc); err != nil {
+			log.Printf("[vault] failed to index embedded %s: %v", entry.Name(), err)
+		} else {
+			count++
+		}
+	}
+	log.Printf("[vault] indexed %d embedded docs (project: _relay)", count)
 }
 
 func (w *Watcher) indexAll(cfg models.VaultConfig) int {
