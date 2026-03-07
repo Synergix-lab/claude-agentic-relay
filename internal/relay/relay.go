@@ -8,6 +8,7 @@ import (
 
 	"agent-relay/internal/db"
 	"agent-relay/internal/ingest"
+	"agent-relay/internal/vault"
 	"agent-relay/internal/web"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -15,16 +16,17 @@ import (
 
 // Relay is the main struct that wires together the MCP server, DB, and notifications.
 type Relay struct {
-	MCPServer  *server.MCPServer
-	HTTP       *server.StreamableHTTPServer
-	DB         *db.DB
-	Registry   *SessionRegistry
-	Ingester   *ingest.Ingester
-	httpServer *http.Server
+	MCPServer    *server.MCPServer
+	HTTP         *server.StreamableHTTPServer
+	DB           *db.DB
+	Registry     *SessionRegistry
+	Ingester     *ingest.Ingester
+	VaultWatcher *vault.Watcher
+	httpServer   *http.Server
 }
 
 // New creates a fully wired Relay with all tools registered.
-func New(database *db.DB, ingester *ingest.Ingester) *Relay {
+func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher) *Relay {
 	mcpSrv := server.NewMCPServer(
 		"agent-relay",
 		"1.0.0",
@@ -34,7 +36,7 @@ func New(database *db.DB, ingester *ingest.Ingester) *Relay {
 	)
 
 	registry := NewSessionRegistry(mcpSrv)
-	handlers := NewHandlers(database, registry, ingester)
+	handlers := NewHandlers(database, registry, ingester, vaultWatcher)
 
 	// Register all tools
 	mcpSrv.AddTools(
@@ -67,11 +69,26 @@ func New(database *db.DB, ingester *ingest.Ingester) *Relay {
 		server.ServerTool{Tool: startTaskTool(), Handler: handlers.HandleStartTask},
 		server.ServerTool{Tool: completeTaskTool(), Handler: handlers.HandleCompleteTask},
 		server.ServerTool{Tool: blockTaskTool(), Handler: handlers.HandleBlockTask},
+		server.ServerTool{Tool: cancelTaskTool(), Handler: handlers.HandleCancelTask},
 		server.ServerTool{Tool: getTaskTool(), Handler: handlers.HandleGetTask},
 		server.ServerTool{Tool: listTasksTool(), Handler: handlers.HandleListTasks},
+		server.ServerTool{Tool: archiveTasksTool(), Handler: handlers.HandleArchiveTasks},
 		// Boards
 		server.ServerTool{Tool: createBoardTool(), Handler: handlers.HandleCreateBoard},
 		server.ServerTool{Tool: listBoardsTool(), Handler: handlers.HandleListBoards},
+		server.ServerTool{Tool: archiveBoardTool(), Handler: handlers.HandleArchiveBoard},
+		server.ServerTool{Tool: deleteBoardTool(), Handler: handlers.HandleDeleteBoard},
+		// Goals
+		server.ServerTool{Tool: createGoalTool(), Handler: handlers.HandleCreateGoal},
+		server.ServerTool{Tool: listGoalsTool(), Handler: handlers.HandleListGoals},
+		server.ServerTool{Tool: getGoalTool(), Handler: handlers.HandleGetGoal},
+		server.ServerTool{Tool: updateGoalTool(), Handler: handlers.HandleUpdateGoal},
+		server.ServerTool{Tool: getGoalCascadeTool(), Handler: handlers.HandleGetGoalCascade},
+		// Vault
+		server.ServerTool{Tool: registerVaultTool(), Handler: handlers.HandleRegisterVault},
+		server.ServerTool{Tool: searchVaultTool(), Handler: handlers.HandleSearchVault},
+		server.ServerTool{Tool: getVaultDocTool(), Handler: handlers.HandleGetVaultDoc},
+		server.ServerTool{Tool: listVaultDocsTool(), Handler: handlers.HandleListVaultDocs},
 		// Agent lifecycle
 		server.ServerTool{Tool: deactivateAgentTool(), Handler: handlers.HandleDeactivateAgent},
 		server.ServerTool{Tool: deleteAgentTool(), Handler: handlers.HandleDeleteAgent},
@@ -99,11 +116,12 @@ func New(database *db.DB, ingester *ingest.Ingester) *Relay {
 	)
 
 	return &Relay{
-		MCPServer: mcpSrv,
-		HTTP:      httpSrv,
-		DB:        database,
-		Registry:  registry,
-		Ingester:  ingester,
+		MCPServer:    mcpSrv,
+		HTTP:         httpSrv,
+		DB:           database,
+		Registry:     registry,
+		Ingester:     ingester,
+		VaultWatcher: vaultWatcher,
 	}
 }
 

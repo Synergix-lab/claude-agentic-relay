@@ -3,7 +3,10 @@ package relay
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +24,14 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 	switch {
 	case path == "/projects" && req.Method == http.MethodGet:
 		r.apiGetProjects(w)
+	case strings.HasPrefix(path, "/projects/") && req.Method == http.MethodPatch:
+		r.apiPatchProject(w, req, strings.TrimPrefix(path, "/projects/"))
+	case strings.HasPrefix(path, "/projects/") && req.Method == http.MethodGet:
+		r.apiGetProject(w, strings.TrimPrefix(path, "/projects/"))
+	case path == "/settings" && req.Method == http.MethodGet:
+		r.apiGetSettings(w)
+	case path == "/settings" && req.Method == http.MethodPut:
+		r.apiPutSetting(w, req)
 	case path == "/agents" && req.Method == http.MethodGet:
 		r.apiGetAgents(w, req)
 	case path == "/org" && req.Method == http.MethodGet:
@@ -89,11 +100,37 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGetTeams(w, req)
 	case strings.HasPrefix(path, "/teams/") && strings.HasSuffix(path, "/members") && req.Method == http.MethodGet:
 		r.apiGetTeamMembers(w, req, path)
+	// Goal endpoints
+	case path == "/goals/all" && req.Method == http.MethodGet:
+		r.apiGetAllGoals(w)
+	case path == "/goals/cascade" && req.Method == http.MethodGet:
+		r.apiGetGoalCascade(w, req)
+	case path == "/goals" && req.Method == http.MethodGet:
+		r.apiGetGoals(w, req)
+	case path == "/goals" && req.Method == http.MethodPost:
+		r.apiCreateGoal(w, req)
+	case strings.HasPrefix(path, "/goals/") && req.Method == http.MethodPut:
+		r.apiUpdateGoal(w, req, path)
+	case strings.HasPrefix(path, "/goals/") && req.Method == http.MethodGet:
+		r.apiGetGoal(w, req, path)
 	// Board endpoints
 	case path == "/boards" && req.Method == http.MethodGet:
 		r.apiGetBoards(w, req)
 	case path == "/boards/all" && req.Method == http.MethodGet:
 		r.apiGetAllBoards(w)
+	// Vault endpoints
+	case path == "/vault/search" && req.Method == http.MethodGet:
+		r.apiSearchVault(w, req)
+	case path == "/vault/docs/all" && req.Method == http.MethodGet:
+		r.apiListAllVaultDocs(w)
+	case path == "/vault/docs" && req.Method == http.MethodGet:
+		r.apiListVaultDocs(w, req)
+	case strings.HasPrefix(path, "/vault/doc/") && req.Method == http.MethodGet:
+		r.apiGetVaultDoc(w, req, path)
+	case strings.HasPrefix(path, "/vault/doc/") && req.Method == http.MethodPut:
+		r.apiUpdateVaultDoc(w, req, path)
+	case path == "/vault/stats" && req.Method == http.MethodGet:
+		r.apiGetVaultStats(w, req)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}
@@ -109,15 +146,67 @@ func projectFromRequest(req *http.Request) string {
 }
 
 func (r *Relay) apiGetProjects(w http.ResponseWriter) {
-	projects, err := r.DB.ListProjects()
+	projects, err := r.DB.ListProjectsWithInfo()
 	if err != nil {
 		http.Error(w, `{"error":"failed to list projects"}`, http.StatusInternalServerError)
 		return
 	}
 	if projects == nil {
-		projects = []string{}
+		projects = []models.ProjectInfo{}
 	}
 	writeJSON(w, projects)
+}
+
+func (r *Relay) apiGetProject(w http.ResponseWriter, name string) {
+	proj, err := r.DB.GetProject(name)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get project"}`, http.StatusInternalServerError)
+		return
+	}
+	if proj == nil {
+		http.Error(w, `{"error":"project not found"}`, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, proj)
+}
+
+func (r *Relay) apiPatchProject(w http.ResponseWriter, req *http.Request, name string) {
+	var body struct {
+		PlanetType string `json:"planet_type"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if body.PlanetType == "" {
+		http.Error(w, `{"error":"planet_type required"}`, http.StatusBadRequest)
+		return
+	}
+	if err := r.DB.UpdateProjectPlanetType(name, body.PlanetType); err != nil {
+		http.Error(w, `{"error":"update failed"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+func (r *Relay) apiGetSettings(w http.ResponseWriter) {
+	sunType := r.DB.GetSetting("sun_type")
+	if sunType == "" {
+		sunType = "1"
+	}
+	writeJSON(w, map[string]string{"sun_type": sunType})
+}
+
+func (r *Relay) apiPutSetting(w http.ResponseWriter, req *http.Request) {
+	var body map[string]string
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	for k, v := range body {
+		r.DB.SetSetting(k, v)
+	}
+	writeJSON(w, map[string]string{"ok": "true"})
 }
 
 type apiTeamRef struct {
@@ -185,6 +274,7 @@ func (r *Relay) apiGetAgents(w http.ResponseWriter, req *http.Request) {
 			IsExecutive:  a.IsExecutive,
 			SessionID:    a.SessionID,
 			Teams:        teamsByAgent[key],
+
 		}
 		online := false
 		if t, err := time.Parse(time.RFC3339, a.LastSeen); err == nil {
@@ -255,6 +345,7 @@ func (r *Relay) apiGetAllAgents(w http.ResponseWriter) {
 			IsExecutive:  a.IsExecutive,
 			SessionID:    a.SessionID,
 			Teams:        teamsByAgent[a.Project+":"+a.Name],
+
 		}
 		if a.SessionID != nil {
 			if s, ok := actMap[*a.SessionID]; ok {
@@ -825,6 +916,7 @@ func (r *Relay) apiDispatchTask(w http.ResponseWriter, req *http.Request) {
 		Priority     string  `json:"priority"`
 		ParentTaskID *string `json:"parent_task_id,omitempty"`
 		BoardID      *string `json:"board_id,omitempty"`
+		GoalID       *string `json:"goal_id,omitempty"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -838,7 +930,7 @@ func (r *Relay) apiDispatchTask(w http.ResponseWriter, req *http.Request) {
 		body.Project = "default"
 	}
 
-	task, err := r.DB.DispatchTask(body.Project, body.Profile, "user", body.Title, body.Description, body.Priority, body.ParentTaskID, body.BoardID)
+	task, err := r.DB.DispatchTask(body.Project, body.Profile, "user", body.Title, body.Description, body.Priority, body.ParentTaskID, body.BoardID, body.GoalID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -1068,6 +1160,127 @@ func (r *Relay) apiGetProfile(w http.ResponseWriter, req *http.Request, path str
 	writeJSON(w, profile)
 }
 
+// --- Goal API endpoints ---
+
+func (r *Relay) apiGetAllGoals(w http.ResponseWriter) {
+	goals, err := r.DB.ListAllGoals(200)
+	if err != nil {
+		http.Error(w, `{"error":"failed to list goals"}`, http.StatusInternalServerError)
+		return
+	}
+	if goals == nil {
+		goals = []models.Goal{}
+	}
+	writeJSON(w, goals)
+}
+
+func (r *Relay) apiGetGoals(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+	goalType := req.URL.Query().Get("type")
+	status := req.URL.Query().Get("status")
+
+	goals, err := r.DB.ListGoals(project, goalType, status, nil, 100)
+	if err != nil {
+		http.Error(w, `{"error":"failed to list goals"}`, http.StatusInternalServerError)
+		return
+	}
+	if goals == nil {
+		goals = []models.Goal{}
+	}
+	writeJSON(w, goals)
+}
+
+func (r *Relay) apiGetGoalCascade(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+	cascade, err := r.DB.GetGoalCascade(project)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get goal cascade"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, cascade)
+}
+
+func (r *Relay) apiCreateGoal(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Project      string  `json:"project"`
+		Type         string  `json:"type"`
+		Title        string  `json:"title"`
+		Description  string  `json:"description"`
+		OwnerAgent   *string `json:"owner_agent,omitempty"`
+		ParentGoalID *string `json:"parent_goal_id,omitempty"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Title == "" {
+		http.Error(w, `{"error":"title is required"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Project == "" {
+		body.Project = "default"
+	}
+	if body.Type == "" {
+		body.Type = "agent_goal"
+	}
+
+	goal, err := r.DB.CreateGoal(body.Project, body.Type, body.Title, body.Description, "user", body.OwnerAgent, body.ParentGoalID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, goal)
+}
+
+func (r *Relay) apiUpdateGoal(w http.ResponseWriter, req *http.Request, path string) {
+	goalID := strings.TrimPrefix(path, "/goals/")
+	if goalID == "" {
+		http.Error(w, `{"error":"missing goal id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		Project     string  `json:"project"`
+		Title       *string `json:"title,omitempty"`
+		Description *string `json:"description,omitempty"`
+		Status      *string `json:"status,omitempty"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Project == "" {
+		body.Project = "default"
+	}
+
+	goal, err := r.DB.UpdateGoal(goalID, body.Project, body.Title, body.Description, body.Status)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, goal)
+}
+
+func (r *Relay) apiGetGoal(w http.ResponseWriter, req *http.Request, path string) {
+	project := projectFromRequest(req)
+	goalID := strings.TrimPrefix(path, "/goals/")
+	if goalID == "" {
+		http.Error(w, `{"error":"missing goal id"}`, http.StatusBadRequest)
+		return
+	}
+
+	gwp, err := r.DB.GetGoalWithProgress(goalID, project)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get goal"}`, http.StatusInternalServerError)
+		return
+	}
+	if gwp == nil {
+		http.Error(w, `{"error":"goal not found"}`, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, gwp)
+}
+
 func (r *Relay) apiGetBoards(w http.ResponseWriter, req *http.Request) {
 	project := projectFromRequest(req)
 	boards, err := r.DB.ListBoards(project)
@@ -1091,4 +1304,194 @@ func (r *Relay) apiGetAllBoards(w http.ResponseWriter) {
 		boards = []models.Board{}
 	}
 	writeJSON(w, boards)
+}
+
+// --- Vault API endpoints ---
+
+func (r *Relay) apiSearchVault(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+	query := req.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, `{"error":"q parameter is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var tags []string
+	if t := req.URL.Query().Get("tags"); t != "" {
+		_ = json.Unmarshal([]byte(t), &tags)
+	}
+
+	results, err := r.DB.SearchVault(project, query, tags, 20)
+	if err != nil {
+		http.Error(w, `{"error":"search failed"}`, http.StatusInternalServerError)
+		return
+	}
+	if results == nil {
+		results = []models.VaultSearchResult{}
+	}
+	writeJSON(w, map[string]any{"query": query, "count": len(results), "results": results})
+}
+
+func (r *Relay) apiListAllVaultDocs(w http.ResponseWriter) {
+	docs, err := r.DB.ListAllVaultDocs(500)
+	if err != nil {
+		http.Error(w, `{"error":"failed to list vault docs"}`, http.StatusInternalServerError)
+		return
+	}
+
+	type docMeta struct {
+		Path      string `json:"path"`
+		Project   string `json:"project"`
+		Title     string `json:"title"`
+		Owner     string `json:"owner"`
+		Tags      string `json:"tags"`
+		SizeBytes int    `json:"size_bytes"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	metas := make([]docMeta, 0, len(docs))
+	for _, d := range docs {
+		metas = append(metas, docMeta{
+			Path: d.Path, Project: d.Project, Title: d.Title, Owner: d.Owner,
+			Tags: d.Tags, SizeBytes: d.SizeBytes, UpdatedAt: d.UpdatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(metas)
+}
+
+func (r *Relay) apiListVaultDocs(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+
+	var tags []string
+	if t := req.URL.Query().Get("tags"); t != "" {
+		_ = json.Unmarshal([]byte(t), &tags)
+	}
+
+	docs, err := r.DB.ListVaultDocs(project, tags, 200)
+	if err != nil {
+		http.Error(w, `{"error":"failed to list vault docs"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Return metadata only
+	type docMeta struct {
+		Path      string `json:"path"`
+		Title     string `json:"title"`
+		Owner     string `json:"owner"`
+		Tags      string `json:"tags"`
+		SizeBytes int    `json:"size_bytes"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	metas := make([]docMeta, 0, len(docs))
+	for _, d := range docs {
+		metas = append(metas, docMeta{
+			Path: d.Path, Title: d.Title, Owner: d.Owner,
+			Tags: d.Tags, SizeBytes: d.SizeBytes, UpdatedAt: d.UpdatedAt,
+		})
+	}
+	writeJSON(w, metas)
+}
+
+func (r *Relay) apiGetVaultDoc(w http.ResponseWriter, req *http.Request, path string) {
+	project := projectFromRequest(req)
+	docPath := strings.TrimPrefix(path, "/vault/doc/")
+	if docPath == "" {
+		http.Error(w, `{"error":"missing doc path"}`, http.StatusBadRequest)
+		return
+	}
+
+	doc, err := r.DB.GetVaultDoc(project, docPath)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get vault doc"}`, http.StatusInternalServerError)
+		return
+	}
+	if doc == nil {
+		http.Error(w, `{"error":"vault doc not found"}`, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, doc)
+}
+
+func (r *Relay) apiUpdateVaultDoc(w http.ResponseWriter, req *http.Request, path string) {
+	project := projectFromRequest(req)
+	docPath := strings.TrimPrefix(path, "/vault/doc/")
+	if docPath == "" {
+		http.Error(w, `{"error":"missing doc path"}`, http.StatusBadRequest)
+		return
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
+		return
+	}
+	defer req.Body.Close()
+
+	var payload struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Write to disk if vault config exists
+	cfg, err := r.DB.GetVaultConfig(project)
+	if err != nil || cfg == nil {
+		http.Error(w, `{"error":"no vault configured for project"}`, http.StatusBadRequest)
+		return
+	}
+
+	absPath := filepath.Join(cfg.Path, docPath)
+	// Read existing file to preserve frontmatter
+	existing, _ := os.ReadFile(absPath)
+	var newContent string
+	if fm := extractFrontmatter(string(existing)); fm != "" {
+		newContent = fm + "\n" + payload.Content
+	} else {
+		newContent = payload.Content
+	}
+
+	if err := os.WriteFile(absPath, []byte(newContent), 0644); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to write file: %v"}`, err), http.StatusInternalServerError)
+		return
+	}
+
+	// The fsnotify watcher will re-index automatically, but update DB now for immediate feedback
+	doc, _ := r.DB.GetVaultDoc(project, docPath)
+	if doc != nil {
+		doc.Content = payload.Content
+		doc.SizeBytes = len(newContent)
+		doc.UpdatedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		r.DB.UpsertVaultDoc(doc)
+	}
+
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// extractFrontmatter returns the raw frontmatter block (including delimiters) or empty string.
+func extractFrontmatter(content string) string {
+	if !strings.HasPrefix(content, "---\n") {
+		return ""
+	}
+	end := strings.Index(content[4:], "\n---")
+	if end < 0 {
+		return ""
+	}
+	return content[:end+4+4] // include closing ---
+}
+
+func (r *Relay) apiGetVaultStats(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+	count, totalSize, err := r.DB.GetVaultStats(project)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get vault stats"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"project":     project,
+		"doc_count":   count,
+		"total_bytes": totalSize,
+	})
 }

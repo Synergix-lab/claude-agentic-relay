@@ -257,6 +257,7 @@ func registerProfileTool() mcp.Tool {
 		mcp.WithString("context_pack", mcp.Description("Markdown blob: soul, skills, working style")),
 		mcp.WithString("soul_keys", mcp.Description("JSON array of memory keys to load at boot")),
 		mcp.WithString("skills", mcp.Description("JSON array of skill objects, e.g. [{\"id\":\"supabase-admin\",\"name\":\"Supabase Administration\",\"tags\":[\"database\",\"auth\"]}]")),
+		mcp.WithString("vault_paths", mcp.Description("JSON array of vault doc path patterns to auto-inject at boot via get_session_context. Supports globs (e.g. [\"team/souls/{slug}.md\",\"guides/supabase-*.md\"]). {slug} is resolved to the profile slug.")),
 	)
 }
 
@@ -303,6 +304,7 @@ func dispatchTaskTool() mcp.Tool {
 		),
 		mcp.WithString("parent_task_id", mcp.Description("Parent task ID for subtasks")),
 		mcp.WithString("board_id", mcp.Description("Board ID to assign this task to (from create_board)")),
+		mcp.WithString("goal_id", mcp.Description("Goal ID to link this task to (from create_goal)")),
 	)
 }
 
@@ -348,6 +350,17 @@ func blockTaskTool() mcp.Tool {
 	)
 }
 
+func cancelTaskTool() mcp.Tool {
+	return mcp.NewTool(
+		"cancel_task",
+		mcp.WithDescription("Cancel a task from any state. Optionally provide a reason. Notifies the dispatcher."),
+		asParam,
+		projectParam,
+		mcp.WithString("task_id", mcp.Description("Task ID to cancel"), mcp.Required()),
+		mcp.WithString("reason", mcp.Description("Why the task is being cancelled")),
+	)
+}
+
 func getTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_task",
@@ -366,13 +379,14 @@ func listTasksTool() mcp.Tool {
 		projectParam,
 		mcp.WithString("status",
 			mcp.Description("Filter by status"),
-			mcp.Enum("pending", "accepted", "in-progress", "done", "blocked"),
+			mcp.Enum("pending", "accepted", "in-progress", "done", "blocked", "cancelled"),
 		),
 		mcp.WithString("profile", mcp.Description("Filter by profile slug")),
 		mcp.WithString("priority",
 			mcp.Description("Filter by priority"),
 			mcp.Enum("P0", "P1", "P2", "P3"),
 		),
+		mcp.WithString("assigned_to", mcp.Description("Filter by assigned agent name")),
 		mcp.WithString("board_id", mcp.Description("Filter by board ID")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
 	)
@@ -397,6 +411,149 @@ func listBoardsTool() mcp.Tool {
 		"list_boards",
 		mcp.WithDescription("List all task boards for a project."),
 		projectParam,
+	)
+}
+
+func archiveBoardTool() mcp.Tool {
+	return mcp.NewTool(
+		"archive_board",
+		mcp.WithDescription("Archive a task board and all its tasks. The board disappears from listings but data is preserved. Use this to clean up old sprint boards."),
+		asParam,
+		projectParam,
+		mcp.WithString("board_id", mcp.Description("Board ID to archive"), mcp.Required()),
+	)
+}
+
+func deleteBoardTool() mcp.Tool {
+	return mcp.NewTool(
+		"delete_board",
+		mcp.WithDescription("Permanently delete an archived board. Only works on boards that have been archived first (safety check). Tasks are NOT deleted."),
+		asParam,
+		projectParam,
+		mcp.WithString("board_id", mcp.Description("Board ID to delete (must be archived first)"), mcp.Required()),
+	)
+}
+
+func archiveTasksTool() mcp.Tool {
+	return mcp.NewTool(
+		"archive_tasks",
+		mcp.WithDescription("Archive completed/cancelled tasks to clean up boards. Soft-deletes tasks so they no longer appear in listings. Archived tasks are never hard-deleted. Use this to keep boards manageable."),
+		asParam,
+		projectParam,
+		mcp.WithString("status", mcp.Description("Status to archive: 'done', 'cancelled', or empty for both"), mcp.Enum("done", "cancelled", "")),
+		mcp.WithString("board_id", mcp.Description("Only archive tasks on this board (optional, empty = all boards)")),
+	)
+}
+
+// --- Goals ---
+
+func createGoalTool() mcp.Tool {
+	return mcp.NewTool(
+		"create_goal",
+		mcp.WithDescription("Create a goal in the cascade hierarchy. Goals flow: mission > project_goal > agent_goal > tasks. Link tasks to goals via goal_id in dispatch_task."),
+		asParam,
+		projectParam,
+		mcp.WithString("type",
+			mcp.Description("Goal level in the cascade"),
+			mcp.Enum("mission", "project_goal", "agent_goal"),
+			mcp.Required(),
+		),
+		mcp.WithString("title", mcp.Description("Goal title"), mcp.Required()),
+		mcp.WithString("description", mcp.Description("Goal description")),
+		mcp.WithString("parent_goal_id", mcp.Description("Parent goal ID (for cascading: mission > project_goal > agent_goal)")),
+		mcp.WithString("owner_agent", mcp.Description("Agent name that owns this goal (typically for agent_goal type)")),
+	)
+}
+
+func listGoalsTool() mcp.Tool {
+	return mcp.NewTool(
+		"list_goals",
+		mcp.WithDescription("List goals with filtering and progress info."),
+		projectParam,
+		mcp.WithString("type",
+			mcp.Description("Filter by goal type"),
+			mcp.Enum("mission", "project_goal", "agent_goal"),
+		),
+		mcp.WithString("status",
+			mcp.Description("Filter by status"),
+			mcp.Enum("active", "completed", "paused"),
+		),
+		mcp.WithString("owner_agent", mcp.Description("Filter by owner agent")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
+	)
+}
+
+func getGoalTool() mcp.Tool {
+	return mcp.NewTool(
+		"get_goal",
+		mcp.WithDescription("Get full goal details including ancestry chain, progress, and children."),
+		projectParam,
+		mcp.WithString("goal_id", mcp.Description("Goal ID"), mcp.Required()),
+	)
+}
+
+func updateGoalTool() mcp.Tool {
+	return mcp.NewTool(
+		"update_goal",
+		mcp.WithDescription("Update a goal's title, description, or status."),
+		asParam,
+		projectParam,
+		mcp.WithString("goal_id", mcp.Description("Goal ID to update"), mcp.Required()),
+		mcp.WithString("title", mcp.Description("New title")),
+		mcp.WithString("description", mcp.Description("New description")),
+		mcp.WithString("status",
+			mcp.Description("New status"),
+			mcp.Enum("active", "completed", "paused"),
+		),
+	)
+}
+
+func getGoalCascadeTool() mcp.Tool {
+	return mcp.NewTool(
+		"get_goal_cascade",
+		mcp.WithDescription("Get the full goal hierarchy tree for a project with progress on each node."),
+		projectParam,
+	)
+}
+
+// --- Vault tools ---
+
+func registerVaultTool() mcp.Tool {
+	return mcp.NewTool(
+		"register_vault",
+		mcp.WithDescription("Register a vault (markdown docs folder) for a project. The relay indexes all .md files and watches for changes via fsnotify. One vault per project. Re-registering replaces the previous vault path."),
+		projectParam,
+		mcp.WithString("path", mcp.Description("Absolute path to the vault directory (e.g. '/Users/me/my-org-docs')"), mcp.Required()),
+	)
+}
+
+func searchVaultTool() mcp.Tool {
+	return mcp.NewTool(
+		"search_vault",
+		mcp.WithDescription("Full-text search across indexed vault documents (markdown files). Returns matching docs with excerpts. Use get_vault_doc to retrieve full content after finding a match."),
+		projectParam,
+		mcp.WithString("query", mcp.Description("Search query (FTS5 syntax: plain words, OR, phrases in quotes)"), mcp.Required()),
+		mcp.WithString("tags", mcp.Description("JSON array of tags to filter by (e.g. [\"guides\",\"decisions\"])")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default: 10)")),
+	)
+}
+
+func getVaultDocTool() mcp.Tool {
+	return mcp.NewTool(
+		"get_vault_doc",
+		mcp.WithDescription("Get the full content of a vault document by its path. Use search_vault first to find the right path."),
+		projectParam,
+		mcp.WithString("path", mcp.Description("Document path relative to vault root (e.g. 'guides/supabase-auth-config.md')"), mcp.Required()),
+	)
+}
+
+func listVaultDocsTool() mcp.Tool {
+	return mcp.NewTool(
+		"list_vault_docs",
+		mcp.WithDescription("List indexed vault documents with optional tag filtering. Returns metadata only (no content)."),
+		projectParam,
+		mcp.WithString("tags", mcp.Description("JSON array of tags to filter by")),
+		mcp.WithNumber("limit", mcp.Description("Max results (default: 100)")),
 	)
 }
 
