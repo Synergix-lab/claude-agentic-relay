@@ -12,7 +12,9 @@ export class APIClient {
     this._msgTimer = null;
     this._convTimer = null;
     this._taskTimer = null;
+    this._goalTimer = null;
     this._running = false;
+    this.onGoals = null;
   }
 
   start() {
@@ -36,6 +38,9 @@ export class APIClient {
 
     // Poll tasks every 3s
     this._taskTimer = setInterval(() => this.fetchLatestTasks(), 3000);
+
+    // Poll goals every 10s
+    this._goalTimer = setInterval(() => this._refreshGoals(), 10000);
 
     // SSE for real-time activity + agent status (<100ms)
     this._sseConnected = false;
@@ -77,6 +82,7 @@ export class APIClient {
     clearInterval(this._msgTimer);
     clearInterval(this._convTimer);
     clearInterval(this._taskTimer);
+    clearInterval(this._goalTimer);
     if (this._activitySource) this._activitySource.close();
     clearInterval(this._activityTimer);
   }
@@ -225,6 +231,78 @@ export class APIClient {
     }
   }
 
+  async _refreshGoals() {
+    if (this.onGoals) {
+      const goals = await this.fetchAllGoals();
+      this.onGoals(goals);
+    }
+  }
+
+  // --- Goal API ---
+
+  async fetchAllGoals() {
+    try {
+      const res = await fetch("/api/goals/all");
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async fetchGoals(params = {}) {
+    try {
+      const qs = new URLSearchParams();
+      if (params.project) qs.set("project", params.project);
+      if (params.type) qs.set("type", params.type);
+      if (params.status) qs.set("status", params.status);
+      const res = await fetch(`/api/goals?${qs}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async fetchGoalCascade(project) {
+    try {
+      const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+      const res = await fetch(`/api/goals/cascade${qs}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async createGoal(data) {
+    try {
+      const res = await fetch("/api/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async updateGoal(goalId, data) {
+    try {
+      const res = await fetch(`/api/goals/${goalId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
   // --- Task API ---
 
   async fetchAllTasks() {
@@ -346,6 +424,134 @@ export class APIClient {
     try {
       const qs = project ? `?project=${encodeURIComponent(project)}` : "";
       const res = await fetch(`/api/tasks/${taskId}${qs}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  // --- Vault API ---
+
+  async fetchAllVaultDocs() {
+    try {
+      const res = await fetch("/api/vault/docs/all");
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async fetchVaultDocs(project, tags) {
+    try {
+      const qs = new URLSearchParams();
+      if (project) qs.set("project", project);
+      if (tags) qs.set("tags", JSON.stringify(tags));
+      const res = await fetch(`/api/vault/docs?${qs}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async searchVaultDocs(project, query) {
+    try {
+      const qs = new URLSearchParams();
+      if (project) qs.set("project", project);
+      qs.set("q", query);
+      const res = await fetch(`/api/vault/search?${qs}`);
+      if (!res.ok) return { results: [] };
+      return await res.json();
+    } catch {
+      return { results: [] };
+    }
+  }
+
+  async fetchVaultDoc(project, path) {
+    try {
+      const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const res = await fetch(`/api/vault/doc/${encodedPath}${qs}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async updateVaultDoc(project, path, content) {
+    try {
+      const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const res = await fetch(`/api/vault/doc/${encodedPath}${qs}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // --- Projects API ---
+
+  async fetchProjects() {
+    try {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  async fetchProject(name) {
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(name)}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async updateProjectPlanet(name, planetType) {
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planet_type: planetType }),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  async fetchSettings() {
+    try {
+      const res = await fetch("/api/settings");
+      if (!res.ok) return {};
+      return await res.json();
+    } catch { return {}; }
+  }
+
+  async updateSettings(settings) {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  async fetchVaultStats(project) {
+    try {
+      const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+      const res = await fetch(`/api/vault/stats${qs}`);
       if (!res.ok) return null;
       return await res.json();
     } catch {
