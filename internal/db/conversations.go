@@ -167,6 +167,24 @@ func (d *DB) ConversationExists(conversationID string) (bool, error) {
 	return count > 0, nil
 }
 
+func (d *DB) LeaveConversation(conversationID, agentName string) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	_, err := d.conn.Exec(
+		"UPDATE conversation_members SET left_at = ? WHERE conversation_id = ? AND agent_name = ? AND left_at IS NULL",
+		now, conversationID, agentName,
+	)
+	return err
+}
+
+func (d *DB) ArchiveConversation(conversationID string) error {
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	_, err := d.conn.Exec(
+		"UPDATE conversations SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+		now, conversationID,
+	)
+	return err
+}
+
 func (d *DB) MarkConversationRead(conversationID, agentName string) error {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 	_, err := d.conn.Exec(

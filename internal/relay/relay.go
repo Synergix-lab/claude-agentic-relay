@@ -22,6 +22,7 @@ type Relay struct {
 	Registry     *SessionRegistry
 	Ingester     *ingest.Ingester
 	VaultWatcher *vault.Watcher
+	Events       *EventBus
 	httpServer   *http.Server
 }
 
@@ -35,8 +36,9 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		server.WithRecovery(),
 	)
 
+	events := NewEventBus()
 	registry := NewSessionRegistry(mcpSrv)
-	handlers := NewHandlers(database, registry, ingester, vaultWatcher)
+	handlers := NewHandlers(database, registry, ingester, vaultWatcher, events)
 
 	// Register all tools
 	mcpSrv.AddTools(
@@ -51,6 +53,8 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		server.ServerTool{Tool: listConversationsTool(), Handler: handlers.HandleListConversations},
 		server.ServerTool{Tool: getConversationMessagesTool(), Handler: handlers.HandleGetConversationMessages},
 		server.ServerTool{Tool: inviteToConversationTool(), Handler: handlers.HandleInviteToConversation},
+		server.ServerTool{Tool: leaveConversationTool(), Handler: handlers.HandleLeaveConversation},
+		server.ServerTool{Tool: archiveConversationTool(), Handler: handlers.HandleArchiveConversation},
 		// Memory tools
 		server.ServerTool{Tool: setMemoryTool(), Handler: handlers.HandleSetMemory},
 		server.ServerTool{Tool: getMemoryTool(), Handler: handlers.HandleGetMemory},
@@ -122,6 +126,7 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		Registry:     registry,
 		Ingester:     ingester,
 		VaultWatcher: vaultWatcher,
+		Events:       events,
 	}
 }
 

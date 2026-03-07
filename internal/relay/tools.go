@@ -143,6 +143,26 @@ func inviteToConversationTool() mcp.Tool {
 	)
 }
 
+func leaveConversationTool() mcp.Tool {
+	return mcp.NewTool(
+		"leave_conversation",
+		mcp.WithDescription("Leave a conversation. You will no longer see its messages."),
+		asParam,
+		projectParam,
+		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
+	)
+}
+
+func archiveConversationTool() mcp.Tool {
+	return mcp.NewTool(
+		"archive_conversation",
+		mcp.WithDescription("Archive a conversation. It will no longer appear in anyone's list."),
+		asParam,
+		projectParam,
+		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
+	)
+}
+
 // --- Memory tools ---
 
 func setMemoryTool() mcp.Tool {

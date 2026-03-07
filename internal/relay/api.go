@@ -69,6 +69,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGetActivity(w)
 	case path == "/activity/stream" && req.Method == http.MethodGet:
 		r.apiStreamActivity(w, req)
+	case path == "/events/stream" && req.Method == http.MethodGet:
+		r.apiStreamEvents(w, req)
 	// Task endpoints
 	case path == "/tasks/all" && req.Method == http.MethodGet:
 		r.apiGetAllTasks(w)
@@ -825,6 +827,35 @@ func (r *Relay) apiStreamActivity(w http.ResponseWriter, req *http.Request) {
 			}
 			payload := r.buildSSEPayload(snap)
 			data, _ := json.Marshal(payload)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
+func (r *Relay) apiStreamEvents(w http.ResponseWriter, req *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := r.Events.Subscribe()
+	defer r.Events.Unsubscribe(ch)
+
+	for {
+		select {
+		case <-req.Context().Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			data, _ := json.Marshal(evt)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}

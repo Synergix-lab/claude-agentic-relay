@@ -22,10 +22,11 @@ type Handlers struct {
 	registry     *SessionRegistry
 	ingester     *ingest.Ingester
 	vaultWatcher *vault.Watcher
+	events       *EventBus
 }
 
-func NewHandlers(db *db.DB, registry *SessionRegistry, ingester *ingest.Ingester, vaultWatcher *vault.Watcher) *Handlers {
-	return &Handlers{db: db, registry: registry, ingester: ingester, vaultWatcher: vaultWatcher}
+func NewHandlers(db *db.DB, registry *SessionRegistry, ingester *ingest.Ingester, vaultWatcher *vault.Watcher, events *EventBus) *Handlers {
+	return &Handlers{db: db, registry: registry, ingester: ingester, vaultWatcher: vaultWatcher, events: events}
 }
 
 // HandleWhoami finds the caller's Claude Code session by grepping transcripts for a unique salt.
@@ -119,6 +120,12 @@ func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequ
 	// Build session_context for the response (Phase 2: boot-in-register)
 	sessionCtx := h.buildSessionContext(project, name, profileSlug)
 	sessionCtx["is_respawn"] = isRespawn
+
+	action := "register"
+	if isRespawn {
+		action = "respawn"
+	}
+	h.events.Emit(MCPEvent{Type: "register", Action: action, Agent: name, Project: project, Label: role})
 
 	return resultJSON(map[string]any{
 		"agent":           agent,
@@ -532,6 +539,65 @@ func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallT
 	})
 }
 
+func (h *Handlers) HandleLeaveConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(req)
+	agent := resolveAgent(req)
+	convID := req.GetString("conversation_id", "")
+	if convID == "" {
+		return mcp.NewToolResultError("conversation_id is required"), nil
+	}
+
+	isMember, err := h.db.IsConversationMember(convID, agent)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to check membership: %v", err)), nil
+	}
+	if !isMember {
+		return mcp.NewToolResultError("you are not a member of this conversation"), nil
+	}
+
+	if err := h.db.LeaveConversation(convID, agent); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to leave: %v", err)), nil
+	}
+
+	h.events.Emit(MCPEvent{
+		Type:    "conversation",
+		Action:  "left",
+		Agent:   agent,
+		Project: project,
+		Label:   convID,
+	})
+
+	return resultJSON(map[string]any{
+		"conversation_id": convID,
+		"left":            agent,
+	})
+}
+
+func (h *Handlers) HandleArchiveConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(req)
+	convID := req.GetString("conversation_id", "")
+	if convID == "" {
+		return mcp.NewToolResultError("conversation_id is required"), nil
+	}
+
+	if err := h.db.ArchiveConversation(convID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to archive: %v", err)), nil
+	}
+
+	h.events.Emit(MCPEvent{
+		Type:    "conversation",
+		Action:  "archived",
+		Agent:   resolveAgent(req),
+		Project: project,
+		Label:   convID,
+	})
+
+	return resultJSON(map[string]any{
+		"conversation_id": convID,
+		"archived":        true,
+	})
+}
+
 func (h *Handlers) notifyConversation(project, conversationID, senderName, subject, messageID string) {
 	members, err := h.db.GetConversationMembers(conversationID)
 	if err != nil {
@@ -617,10 +683,13 @@ func (h *Handlers) HandleSetMemory(ctx context.Context, req mcp.CallToolRequest)
 	result := map[string]any{
 		"memory": mem,
 	}
+	action := "set"
 	if mem.ConflictWith != nil {
 		result["conflict"] = true
 		result["message"] = fmt.Sprintf("Conflict detected: key '%s' already exists with a different value. Both versions preserved. Use resolve_conflict to pick the truth.", key)
+		action = "conflict"
 	}
+	h.events.Emit(MCPEvent{Type: "memory", Action: action, Agent: agent, Project: project, Label: key})
 
 	return resultJSON(result)
 }
@@ -782,6 +851,7 @@ func (h *Handlers) HandleResolveConflict(ctx context.Context, req mcp.CallToolRe
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to resolve conflict: %v", err)), nil
 	}
+	h.events.Emit(MCPEvent{Type: "memory", Action: "resolve", Agent: agent, Project: project, Label: key})
 
 	return resultJSON(map[string]any{
 		"resolved": true,
@@ -877,6 +947,8 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 		h.registry.NotifyProfile(project, profile, agent, fmt.Sprintf("[%s] %s", priority, title), task.ID)
 	}
 
+	h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: profile, Label: title})
+
 	// Dedup warning: check for similar active tasks on same profile
 	similar, _ := h.db.FindSimilarTasks(project, profile, title)
 	if len(similar) > 0 {
@@ -913,6 +985,7 @@ func (h *Handlers) HandleClaimTask(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to claim task: %v", err)), nil
 	}
+	h.events.Emit(MCPEvent{Type: "task", Action: "claim", Agent: agent, Project: project, Label: task.Title})
 	return resultJSON(task)
 }
 
@@ -928,6 +1001,7 @@ func (h *Handlers) HandleStartTask(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to start task: %v", err)), nil
 	}
+	h.events.Emit(MCPEvent{Type: "task", Action: "start", Agent: agent, Project: project, Label: task.Title})
 	return resultJSON(task)
 }
 
@@ -944,6 +1018,8 @@ func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolReque
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to complete task: %v", err)), nil
 	}
+
+	h.events.Emit(MCPEvent{Type: "task", Action: "complete", Agent: agent, Project: project, Target: task.DispatchedBy, Label: task.Title})
 
 	// Notify dispatcher
 	h.registry.Notify(project, task.DispatchedBy, agent, fmt.Sprintf("Task done: %s", task.Title), task.ID)
@@ -988,6 +1064,8 @@ func (h *Handlers) HandleBlockTask(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to block task: %v", err)), nil
 	}
+
+	h.events.Emit(MCPEvent{Type: "task", Action: "block", Agent: agent, Project: project, Target: task.DispatchedBy, Label: task.Title})
 
 	// Notify dispatcher — blocked is critical
 	reasonStr := ""
@@ -1147,6 +1225,7 @@ func (h *Handlers) HandleDeactivateAgent(ctx context.Context, req mcp.CallToolRe
 	if err := h.db.DeactivateAgent(project, name); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to deactivate agent: %v", err)), nil
 	}
+	h.events.Emit(MCPEvent{Type: "register", Action: "deactivate", Agent: name, Project: project})
 
 	return resultJSON(map[string]any{
 		"deactivated": true,
@@ -1233,6 +1312,7 @@ func (h *Handlers) HandleSleepAgent(ctx context.Context, req mcp.CallToolRequest
 	if err := h.db.SleepAgent(project, agent); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to sleep agent: %v", err)), nil
 	}
+	h.events.Emit(MCPEvent{Type: "register", Action: "sleep", Agent: agent, Project: project})
 
 	return resultJSON(map[string]any{
 		"status": "sleeping",
@@ -1282,6 +1362,7 @@ func (h *Handlers) HandleCreateGoal(ctx context.Context, req mcp.CallToolRequest
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create goal: %v", err)), nil
 	}
+	h.events.Emit(MCPEvent{Type: "goal", Action: "create", Agent: agent, Project: project, Label: title})
 	return resultJSON(goal)
 }
 

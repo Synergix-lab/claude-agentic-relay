@@ -7,6 +7,7 @@ import { KanbanBoard } from "./kanban.js";
 import { VaultBrowser } from "./vault.js";
 import { ShortcutManager } from "./shortcuts.js";
 import { ConnectionOverlay } from "./connections.js";
+import { MCPEffects } from "./mcp-effects.js";
 import { spaceAssets } from "./space-assets.js";
 import { roboSprite } from "./robo-sprite.js";
 import { mechSprite } from "./mech-sprite.js";
@@ -59,11 +60,22 @@ let hoveredAgentKey = null;
 let activitySessions = {};
 
 const connectionOverlay = new ConnectionOverlay();
+const mcpEffects = new MCPEffects();
 
 engine.add(worldBg);
 engine.add(connectionOverlay);
 engine.add(world);
+engine.add(mcpEffects);
 engine.start();
+
+// MCP effects: resolve agent positions for animations
+mcpEffects.setAgentResolver((project, name) => {
+  const key = agentKey(project, name);
+  const av = agentViews.get(key);
+  if (!av) return null;
+  return { x: av.x, y: av.y };
+});
+mcpEffects.connect();
 
 // --- Cluster layout ---
 
