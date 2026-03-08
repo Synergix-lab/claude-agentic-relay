@@ -130,7 +130,12 @@ detect_platform() {
   esac
 
   if [[ "$OS" == "darwin" ]]; then
-    BIN_DIR="/usr/local/bin"
+    if [[ -w "/usr/local/bin" ]]; then
+      BIN_DIR="/usr/local/bin"
+    else
+      BIN_DIR="$HOME/.local/bin"
+      mkdir -p "$BIN_DIR"
+    fi
   else
     BIN_DIR="$HOME/.local/bin"
     mkdir -p "$BIN_DIR"
@@ -249,11 +254,7 @@ create_ar_symlink() {
     fi
   fi
 
-  if [[ -w "$bin_dir" ]]; then
-    ln -sf "$bin_path" "$ar_path"
-  else
-    sudo ln -sf "$bin_path" "$ar_path" 2>/dev/null || true
-  fi
+  ln -sf "$bin_path" "$ar_path" 2>/dev/null || true
 }
 
 # ── Step 1: Install binary ──────────────────────────────────────────────────
@@ -262,7 +263,7 @@ install_binary() {
   step 1 "Installing binary"
 
   local bin_path="${BIN_DIR}/${BINARY_NAME}"
-  local needs_sudo=false
+  # BIN_DIR is already writable (detect_platform ensures this)
 
   # Check existing install
   if [[ -f "$bin_path" ]]; then
@@ -278,24 +279,18 @@ install_binary() {
     fi
   fi
 
-  # Check write permissions
-  if [[ "$OS" == "darwin" ]] && [[ ! -w "$BIN_DIR" ]]; then
-    needs_sudo=true
-    warn "Need sudo for ${BIN_DIR}"
+  # Check write permissions (fallback to ~/.local/bin if needed)
+  if [[ ! -w "$BIN_DIR" ]]; then
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$BIN_DIR"
+    bin_path="${BIN_DIR}/${BINARY_NAME}"
+    warn "Using ${BIN_DIR} (no write access to /usr/local/bin)"
   fi
 
   # Try build from source first
   if try_build_from_source; then
     local tmp_bin="./agent-relay"
-    if [[ "$needs_sudo" == true ]]; then
-      if ! sudo install -m 755 "$tmp_bin" "$bin_path"; then
-        error "Failed to install to ${bin_path} (sudo required)"
-        info "Run manually: ${BOLD}sudo install -m 755 ${tmp_bin} ${bin_path}${RESET}"
-        return 1
-      fi
-    else
-      install -m 755 "$tmp_bin" "$bin_path"
-    fi
+    install -m 755 "$tmp_bin" "$bin_path"
     rm -f "$tmp_bin"
     # Create 'ar' shortcut symlink
     create_ar_symlink "$bin_path"
@@ -305,7 +300,7 @@ install_binary() {
 
   # Fallback to prebuilt
   info "Downloading prebuilt binary..."
-  download_prebuilt "$bin_path" "$needs_sudo"
+  download_prebuilt "$bin_path"
 }
 
 try_build_from_source() {
@@ -357,8 +352,6 @@ get_latest_version() {
 
 download_prebuilt() {
   local bin_path="$1"
-  local needs_sudo="$2"
-
   local version
   version=$(get_latest_version)
   if [[ "$version" == "dev" ]]; then
@@ -381,12 +374,7 @@ download_prebuilt() {
   spinner_stop
 
   tar -xzf "$tmpdir/archive.tar.gz" -C "$tmpdir"
-
-  if [[ "$needs_sudo" == true ]]; then
-    sudo install -m 755 "$tmpdir/agent-relay" "$bin_path"
-  else
-    install -m 755 "$tmpdir/agent-relay" "$bin_path"
-  fi
+  install -m 755 "$tmpdir/agent-relay" "$bin_path"
 
   rm -rf "$tmpdir"
   # Create 'ar' shortcut symlink
@@ -715,7 +703,7 @@ scan_and_configure_projects() {
     if [[ "$already" == false ]]; then
       projects+=("$project_dir")
     fi
-  done < <(find "$HOME" -maxdepth 3 -name "CLAUDE.md" -o -name ".mcp.json" -print0 2>/dev/null | head -z -100)
+  done < <(find "$HOME" -maxdepth 3 \( -name "CLAUDE.md" -o -name ".mcp.json" \) -print0 2>/dev/null | tr '\0' '\n' | head -100 | tr '\n' '\0')
 
   # Filter out non-project directories
   local -a valid_projects=()
@@ -932,12 +920,16 @@ verify_installation() {
     fi
   fi
 
-  # Check PATH on Linux
-  if [[ "$OS" == "linux" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+  # Check PATH
+  if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo
     warn "${BIN_DIR} is not in your PATH"
     info "Add to your shell profile:"
-    echo "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${RESET}"
+    if [[ "$OS" == "darwin" ]]; then
+      echo "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc${RESET}"
+    else
+      echo "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${RESET}"
+    fi
   fi
 }
 
