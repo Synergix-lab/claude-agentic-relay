@@ -687,79 +687,11 @@ export class VaultBrowser {
 
   _renderMarkdown(text) {
     if (!text) return "";
-
-    // Extract fenced code blocks first to protect them
-    const codeBlocks = [];
-    let src = text.replace(/^[ \t]*```(\w*)[ \t]*\n([\s\S]*?\n)[ \t]*```[ \t]*$/gm, (_, lang, content) => {
-      const idx = codeBlocks.length;
-      const escaped = content.trimEnd()
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const langLabel = lang ? `<span class="vault-code-lang">${lang}</span>` : "";
-      codeBlocks.push(`<pre>${langLabel}<code>${escaped}</code></pre>`);
-      return `\x00CODEBLOCK${idx}\x00`;
-    });
-    // Fallback: catch ``` blocks without trailing newline before closing
-    src = src.replace(/^[ \t]*```(\w*)[ \t]*\n([\s\S]*?)```[ \t]*$/gm, (_, lang, content) => {
-      const idx = codeBlocks.length;
-      const escaped = content.trimEnd()
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const langLabel = lang ? `<span class="vault-code-lang">${lang}</span>` : "";
-      codeBlocks.push(`<pre>${langLabel}<code>${escaped}</code></pre>`);
-      return `\x00CODEBLOCK${idx}\x00`;
-    });
-
-    // Escape HTML in remaining text
-    src = src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-    // Tables — match header + separator + body rows
-    src = src.replace(/^(\|.+\|)[ \t]*\n(\|[\s:|-]+\|)[ \t]*\n((?:\|.+\|[ \t]*\n?)+)/gm, (_, header, sep, body) => {
-      const parseCells = row => row.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      const ths = parseCells(header).map(c => `<th>${c}</th>`).join("");
-      const rows = body.trim().split("\n").map(row => {
-        const tds = parseCells(row).map(c => `<td>${c}</td>`).join("");
-        return `<tr>${tds}</tr>`;
-      }).join("");
-      return `<table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table>`;
-    });
-
-    // Headings
-    src = src.replace(/^#### (.+)$/gm, '<h5>$1</h5>');
-    src = src.replace(/^### (.+)$/gm, '<h4>$1</h4>');
-    src = src.replace(/^## (.+)$/gm, '<h3>$1</h3>');
-    src = src.replace(/^# (.+)$/gm, '<h2>$1</h2>');
-
-    src = src.replace(/^(-{3,}|\*{3,}|_{3,})$/gm, '<hr>');
-
-    // Blockquotes — only lines starting with > that aren't inside list items
-    src = src.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-    src = src.replace(/<\/blockquote>\n<blockquote>/g, '<br>');
-
-    // Inline formatting
-    src = src.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    src = src.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    src = src.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-    src = src.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-
-    // Checkboxes
-    src = src.replace(/\[x\]/gi, '<span class="vault-check done">&#10003;</span>');
-    src = src.replace(/\[ \]/g, '<span class="vault-check">&#9744;</span>');
-
-    // Lists — wrap consecutive <li> in <ul>
-    src = src.replace(/^- (.+)$/gm, '<li>$1</li>');
-    src = src.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
-    src = src.replace(/((?:<li>[\s\S]*?<\/li>\n?)+)/g, '<ul>$1</ul>');
-
-    // Paragraphs
-    src = src.replace(/\n{2,}/g, '</p><p>');
-    src = src.replace(/\n/g, '<br>');
-    src = `<p>${src}</p>`;
-    // Clean up empty paragraphs around block elements
-    src = src.replace(/<p>\s*(<(?:ul|table|pre|blockquote|h[2-5]|hr))/g, '$1');
-    src = src.replace(/(<\/(?:ul|table|pre|blockquote|h[2-5])>)\s*<\/p>/g, '$1');
-
-    // Restore code blocks
-    src = src.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
-
-    return src;
+    if (typeof marked !== "undefined") {
+      marked.setOptions({ gfm: true, breaks: true });
+      return marked.parse(text);
+    }
+    // Fallback: plain text with escaped HTML
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
   }
 }

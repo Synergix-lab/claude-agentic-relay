@@ -2459,13 +2459,13 @@ body.view-galaxy .quest-tracker { display: none !important; }
 
 .vault-detail-content ul {
   list-style: none;
-  padding-left: 0;
-  margin: 8px 0;
+  padding-left: 16px;
+  margin: 6px 0;
 }
 
 .vault-detail-content li {
-  margin: 3px 0;
-  padding-left: 16px;
+  margin: 2px 0;
+  padding-left: 12px;
   position: relative;
   line-height: 1.5;
 }
@@ -2474,20 +2474,18 @@ body.view-galaxy .quest-tracker { display: none !important; }
   content: "\25B8";
   color: #00FFFF;
   position: absolute;
-  left: 0;
+  left: -4px;
   opacity: 0.5;
   font-size: 10px;
-  top: 2px;
+  top: 3px;
 }
 
-.vault-check {
-  font-size: 12px;
-  margin-right: 4px;
-  color: #6a6a80;
+.vault-detail-content li.task-list-item::before {
+  content: none;
 }
 
-.vault-check.done {
-  color: #00e676;
+.vault-detail-content li.task-list-item {
+  padding-left: 0;
 }
 
 .vault-detail-content a {
@@ -2513,7 +2511,17 @@ body.view-galaxy .quest-tracker { display: none !important; }
 }
 
 .vault-detail-content p {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
+}
+
+.vault-detail-content ol {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.vault-detail-content input[type="checkbox"] {
+  margin-right: 6px;
+  accent-color: #00e676;
 }
 
 .vault-detail-content hr {
