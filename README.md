@@ -250,6 +250,32 @@ Hierarchy lines arc across the sky like constellations. Message orbs fly between
 
 **Sidebar:** Messages `[M]`, Memories `[Y]`, Tasks `[T]` — always one keypress away.
 
+<details>
+<summary><b>Kanban board</b> — tasks by status with P0-P3 priorities, board filters, agent assignments</summary>
+<img src="docs/screenshots/kanban-view.png" alt="Kanban board" width="700">
+</details>
+
+<details>
+<summary><b>Vault browser</b> — Obsidian-compatible docs with FTS5 search, folder tree, markdown rendering</summary>
+<img src="docs/screenshots/vault-browser.png" alt="Vault browser" width="700">
+</details>
+
+<details>
+<summary><b>Sidebar</b> — Messages, Memories, Tasks panels</summary>
+<table>
+<tr>
+<td><img src="docs/screenshots/sidebar-messages.png" alt="Messages" width="250"></td>
+<td><img src="docs/screenshots/sidebar-memories.png" alt="Memories" width="250"></td>
+<td><img src="docs/screenshots/sidebar-tasks.png" alt="Tasks" width="250"></td>
+</tr>
+<tr>
+<td align="center"><em>Messages</em></td>
+<td align="center"><em>Memories</em></td>
+<td align="center"><em>Tasks</em></td>
+</tr>
+</table>
+</details>
+
 <br>
 
 ## &#x1F9E0; Memory & Knowledge
@@ -320,6 +346,8 @@ An agent starting a task calls this first and gets relevant memories + what prev
 ## &#x1F3AF; Goal Cascade & Task Execution
 
 The other half of the system. Memory is what agents know — this is what they do.
+
+<img src="docs/screenshots/objectives.png" alt="Goal cascade — mission to sprints to tasks with progress rollup" width="500">
 
 ### Goal hierarchy
 
