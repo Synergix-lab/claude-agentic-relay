@@ -40,7 +40,7 @@ $DataDir = Join-Path $env:USERPROFILE ".agent-relay"
 
 function Write-Step($num, $msg) {
     Write-Host ""
-    Write-Host "[$num/5] $msg" -ForegroundColor Magenta
+    Write-Host "[$num/6] $msg" -ForegroundColor Magenta
 }
 
 function Write-Ok($msg) {
@@ -159,6 +159,58 @@ function Invoke-Uninstall {
 
 # ── Step 1: Install binary ──────────────────────────────────────────────────
 
+function Try-BuildFromSource {
+    # Check for Go
+    $goCmd = Get-Command go -ErrorAction SilentlyContinue
+    if (-not $goCmd) {
+        Write-Info "Go not found, will download prebuilt binary"
+        return $false
+    }
+
+    # Check for C compiler (gcc from MSYS2/MinGW, or cl from MSVC)
+    $hasCC = (Get-Command gcc -ErrorAction SilentlyContinue) -or (Get-Command cc -ErrorAction SilentlyContinue)
+    if (-not $hasCC) {
+        Write-Warn "No C compiler found (needed for CGO/SQLite)"
+        Write-Info "Install MinGW-w64: winget install -e --id MSYS2.MSYS2"
+        Write-Info "Then: pacman -S mingw-w64-x86_64-gcc"
+        Write-Info "Will download prebuilt binary instead"
+        return $false
+    }
+
+    Write-Info "Go + C compiler found, building from source..."
+
+    $tmpDir = Join-Path $env:TEMP "agent-relay-build"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    try {
+        Write-Info "Cloning repository..."
+        & git clone --depth 1 "https://github.com/$Repo.git" "$tmpDir\src" 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "Clone failed" }
+
+        Write-Info "Building binary (this may take a minute)..."
+        $version = Get-LatestVersion
+        if (-not $version) { $version = "dev" }
+
+        $env:CGO_ENABLED = "1"
+        Push-Location "$tmpDir\src"
+        & go build -tags fts5 -ldflags="-s -w -X main.Version=$version" -o "$tmpDir\agent-relay.exe" .
+        Pop-Location
+
+        if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+        Copy-Item "$tmpDir\agent-relay.exe" $BinPath -Force
+        Remove-Item $tmpDir -Recurse -Force
+        Write-Ok "Built and installed from source"
+        return $true
+    } catch {
+        Pop-Location -ErrorAction SilentlyContinue
+        Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Warn "Source build failed: $_"
+        Write-Info "Falling back to prebuilt binary"
+        return $false
+    }
+}
+
 function Install-Binary {
     Write-Step 1 "Installing binary"
 
@@ -175,9 +227,29 @@ function Install-Binary {
         }
     }
 
+    # Try build from source first (Go + GCC required)
+    if (Try-BuildFromSource) {
+        # Create ar.cmd shortcut
+        $arCmd = Join-Path $InstallDir "ar.cmd"
+        "@echo off`r`n`"%~dp0agent-relay.exe`" %*" | Set-Content $arCmd
+        Write-Ok "Created ar shortcut"
+
+        # Add to PATH if not already there
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        if ($userPath -notlike "*$InstallDir*") {
+            [Environment]::SetEnvironmentVariable("Path", "$userPath;$InstallDir", "User")
+            $env:Path = "$env:Path;$InstallDir"
+            Write-Ok "Added $InstallDir to PATH"
+        }
+        return
+    }
+
+    # Fallback to prebuilt download
     $version = Get-LatestVersion
     if (-not $version) {
-        Write-Err "No releases found. Visit https://github.com/$Repo/releases"
+        Write-Err "No releases found and source build failed."
+        Write-Err "Install Go (https://go.dev/dl/) + MinGW-w64 GCC, then retry."
+        Write-Err "Or check https://github.com/$Repo/releases"
         exit 1
     }
 
@@ -245,10 +317,104 @@ function Install-Service {
     Write-Ok "Installed scheduled task (starts on login, auto-restarts)"
 }
 
-# ── Step 3: Install skill ───────────────────────────────────────────────────
+# ── Step 3: Install hooks ──────────────────────────────────────────────────
+
+function Install-Hooks {
+    Write-Step 3 "Installing activity tracking hooks"
+
+    $hooksDir = Join-Path $env:USERPROFILE ".claude\hooks"
+    $settingsFile = Join-Path $env:USERPROFILE ".claude\settings.json"
+    New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
+
+    # Create PostToolUse hook script (PowerShell)
+    $postToolHook = Join-Path $hooksDir "ingest-post-tool.ps1"
+    @'
+$eventsDir = Join-Path $env:USERPROFILE ".pixel-office\events"
+New-Item -ItemType Directory -Path $eventsDir -Force | Out-Null
+
+$input = $input | Out-String
+try { $data = $input | ConvertFrom-Json } catch { exit 0 }
+$sessionId = if ($data.session_id) { $data.session_id } else { "unknown" }
+$toolName = if ($data.tool_name) { $data.tool_name } else { "unknown" }
+$ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+$filename = Join-Path $eventsDir "tool-end-$PID-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).json"
+$json = '{"type":"tool_end","session_id":"' + $sessionId + '","tool":"' + $toolName + '","ts":"' + $ts + '"}'
+$json | Set-Content "$filename.tmp"
+Move-Item "$filename.tmp" $filename -Force
+exit 0
+'@ | Set-Content $postToolHook
+
+    # Create Stop hook script
+    $stopHook = Join-Path $hooksDir "ingest-stop.ps1"
+    @'
+$eventsDir = Join-Path $env:USERPROFILE ".pixel-office\events"
+New-Item -ItemType Directory -Path $eventsDir -Force | Out-Null
+
+$input = $input | Out-String
+try { $data = $input | ConvertFrom-Json } catch { exit 0 }
+$sessionId = if ($data.session_id) { $data.session_id } else { "unknown" }
+$ts = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+$filename = Join-Path $eventsDir "stop-$PID-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).json"
+$json = '{"type":"stop","session_id":"' + $sessionId + '","tool":"","file":"","ts":"' + $ts + '"}'
+$json | Set-Content "$filename.tmp"
+Move-Item "$filename.tmp" $filename -Force
+exit 0
+'@ | Set-Content $stopHook
+
+    # Merge into Claude Code settings.json
+    $data = @{}
+    if (Test-Path $settingsFile) {
+        try {
+            $data = Get-Content $settingsFile -Raw | ConvertFrom-Json
+        } catch {
+            $data = @{}
+        }
+    }
+
+    # Ensure hooks structure
+    if (-not $data.hooks) {
+        $data | Add-Member -NotePropertyName "hooks" -NotePropertyValue @{} -Force
+    }
+
+    $postCmd = "powershell -ExecutionPolicy Bypass -File `"$postToolHook`""
+    $stopCmd = "powershell -ExecutionPolicy Bypass -File `"$stopHook`""
+
+    # Add PostToolUse hook if not present
+    $postHooks = @()
+    if ($data.hooks.PostToolUse) { $postHooks = @($data.hooks.PostToolUse) }
+    $hasPost = $postHooks | Where-Object { $_.hooks[0].command -eq $postCmd }
+    if (-not $hasPost) {
+        $postHooks += @{ hooks = @(@{ type = "command"; command = $postCmd; timeout = 5 }) }
+    }
+    if (-not $data.hooks.PostToolUse) {
+        $data.hooks | Add-Member -NotePropertyName "PostToolUse" -NotePropertyValue $postHooks -Force
+    } else {
+        $data.hooks.PostToolUse = $postHooks
+    }
+
+    # Add Stop hook if not present
+    $stopHooks = @()
+    if ($data.hooks.Stop) { $stopHooks = @($data.hooks.Stop) }
+    $hasStop = $stopHooks | Where-Object { $_.hooks[0].command -eq $stopCmd }
+    if (-not $hasStop) {
+        $stopHooks += @{ hooks = @(@{ type = "command"; command = $stopCmd; timeout = 5 }) }
+    }
+    if (-not $data.hooks.Stop) {
+        $data.hooks | Add-Member -NotePropertyName "Stop" -NotePropertyValue $stopHooks -Force
+    } else {
+        $data.hooks.Stop = $stopHooks
+    }
+
+    $data | ConvertTo-Json -Depth 10 | Set-Content $settingsFile
+    Write-Ok "Installed activity hooks (PostToolUse + Stop)"
+}
+
+# ── Step 4: Install skill ───────────────────────────────────────────────────
 
 function Install-Skill {
-    Write-Step 3 "Installing /relay skill"
+    Write-Step 4 "Installing /relay skill"
 
     New-Item -ItemType Directory -Path $SkillDir -Force | Out-Null
 
@@ -292,7 +458,7 @@ Parse the user's arguments from ``$ARGUMENTS``:
 # ── Step 4: Scan and configure projects ──────────────────────────────────────
 
 function Find-AndConfigureProjects {
-    Write-Step 4 "Scanning for Claude Code projects"
+    Write-Step 5 "Scanning for Claude Code projects"
 
     if ($SkipProjects) {
         Write-Info "Skipped (-SkipProjects)"
@@ -326,7 +492,7 @@ function Find-AndConfigureProjects {
 
     if ($projects.Count -eq 0) {
         Write-Info "No Claude Code projects found"
-        Write-Info "Manually add to .mcp.json: {`"mcpServers`":{`"agent-relay`":{`"type`":`"http`",`"url`":`"http://localhost:${Port}/mcp?project=my-project`"}}}"
+        Write-Info "Manually add to .mcp.json: {`"mcpServers`":{`"agent-relay`":{`"type`":`"http`",`"url`":`"http://localhost:${Port}/mcp`"}}}"
         return
     }
 
@@ -368,7 +534,7 @@ function Find-AndConfigureProjects {
 function Set-ProjectConfig($projectDir, $agentName) {
     $mcpPath = Join-Path $projectDir ".mcp.json"
     $projectName = (Split-Path $projectDir -Leaf).ToLower() -replace '[^a-z0-9]', '-' -replace '-+', '-' -replace '^-|-$', ''
-    $relayEntry = @{ type = "http"; url = "http://localhost:$Port/mcp?project=$projectName" }
+    $relayEntry = @{ type = "http"; url = "http://localhost:$Port/mcp" }
 
     if (Test-Path $mcpPath) {
         $content = Get-Content $mcpPath -Raw
@@ -397,13 +563,20 @@ function Set-ProjectConfig($projectDir, $agentName) {
 # ── Step 5: Verify ──────────────────────────────────────────────────────────
 
 function Test-Installation {
-    Write-Step 5 "Verifying installation"
+    Write-Step 6 "Verifying installation"
 
     if (Test-Path $BinPath) {
         $ver = & $BinPath --version 2>$null
         Write-Ok "Binary: $ver"
     } else {
         Write-Err "Binary not found at $BinPath"
+    }
+
+    $hookPath = Join-Path $env:USERPROFILE ".claude\hooks\ingest-post-tool.ps1"
+    if (Test-Path $hookPath) {
+        Write-Ok "Hooks: activity tracking installed"
+    } else {
+        Write-Warn "Hooks: activity tracking not found"
     }
 
     if (Test-Path $SkillPath) {
@@ -451,6 +624,7 @@ if ($Uninstall) {
 Show-Banner
 Install-Binary
 Install-Service
+Install-Hooks
 Install-Skill
 Find-AndConfigureProjects
 Test-Installation

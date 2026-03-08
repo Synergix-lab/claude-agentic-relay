@@ -62,7 +62,7 @@ jobs:
           CC: ${{ matrix.cc }}
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          go build -ldflags="-s -w -X main.Version=${VERSION}" -o "agent-relay${{ matrix.ext }}" .
+          go build -tags fts5 -ldflags="-s -w -X main.Version=${VERSION}" -o "agent-relay${{ matrix.ext }}" .
 
       - name: Package (tar.gz)
         if: matrix.os != 'windows'

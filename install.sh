@@ -32,7 +32,7 @@ info()    { echo "${BLUE}${BOLD}::${RESET} $*"; }
 success() { echo "${GREEN}${BOLD}✓${RESET} $*"; }
 warn()    { echo "${YELLOW}${BOLD}!${RESET} $*"; }
 error()   { echo "${RED}${BOLD}✗${RESET} $*" >&2; }
-step()    { echo; echo "${MAGENTA}${BOLD}[$1/5]${RESET} ${BOLD}$2${RESET}"; }
+step()    { echo; echo "${MAGENTA}${BOLD}[$1/6]${RESET} ${BOLD}$2${RESET}"; }
 
 die() { error "$@"; exit 1; }
 
@@ -336,7 +336,7 @@ try_build_from_source() {
 
   local build_output="${PWD}/agent-relay"
   spinner_start "Building binary (this may take a minute)"
-  if ! (cd "$tmpdir/src" && CGO_ENABLED=1 go build -ldflags="-s -w -X main.Version=$(get_latest_version)" -o "$build_output" . 2>/dev/null); then
+  if ! (cd "$tmpdir/src" && CGO_ENABLED=1 go build -tags fts5 -ldflags="-s -w -X main.Version=$(get_latest_version)" -o "$build_output" . 2>/dev/null); then
     spinner_stop
     warn "Build failed, will download prebuilt"
     rm -rf "$tmpdir"
@@ -504,10 +504,109 @@ EOF
   fi
 }
 
-# ── Step 3: Install skill ───────────────────────────────────────────────────
+# ── Step 3: Install hooks ──────────────────────────────────────────────────
+
+install_hooks() {
+  step 3 "Installing activity tracking hooks"
+
+  local hooks_dir="$HOME/.claude/hooks"
+  local settings_file="$HOME/.claude/settings.json"
+  mkdir -p "$hooks_dir"
+
+  # Create PostToolUse hook script
+  cat > "$hooks_dir/ingest-post-tool.sh" <<'HOOK_EOF'
+EVENTS_DIR="$HOME/.pixel-office/events"
+mkdir -p "$EVENTS_DIR"
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
+TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+FILENAME="$EVENTS_DIR/tool-end-$$-$(date +%s).json"
+TMP="$FILENAME.tmp"
+printf '{"type":"tool_end","session_id":"%s","tool":"%s","ts":"%s"}' \
+  "$SESSION_ID" "$TOOL_NAME" "$TS" > "$TMP"
+mv "$TMP" "$FILENAME"
+
+exit 0
+HOOK_EOF
+  chmod +x "$hooks_dir/ingest-post-tool.sh"
+
+  # Create Stop hook script
+  cat > "$hooks_dir/ingest-stop.sh" <<'HOOK_EOF'
+EVENTS_DIR="$HOME/.pixel-office/events"
+mkdir -p "$EVENTS_DIR"
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+FILENAME="$EVENTS_DIR/stop-$$-$(date +%s).json"
+TMP="$FILENAME.tmp"
+printf '{"type":"stop","session_id":"%s","tool":"","file":"","ts":"%s"}' \
+  "$SESSION_ID" "$TS" > "$TMP"
+mv "$TMP" "$FILENAME"
+
+exit 0
+HOOK_EOF
+  chmod +x "$hooks_dir/ingest-stop.sh"
+
+  # Merge hooks into Claude Code settings.json
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import json, os
+
+path = os.path.expanduser('$settings_file')
+data = {}
+if os.path.exists(path):
+    with open(path) as f:
+        data = json.load(f)
+
+hooks = data.setdefault('hooks', {})
+
+# PostToolUse hook
+post_hooks = hooks.setdefault('PostToolUse', [])
+hook_cmd = '$hooks_dir/ingest-post-tool.sh'
+already = any(
+    h.get('hooks', [{}])[0].get('command', '') == hook_cmd
+    if isinstance(h, dict) else False
+    for h in post_hooks
+)
+if not already:
+    post_hooks.append({
+        'hooks': [{'type': 'command', 'command': hook_cmd, 'timeout': 5}]
+    })
+
+# Stop hook
+stop_hooks = hooks.setdefault('Stop', [])
+stop_cmd = '$hooks_dir/ingest-stop.sh'
+already = any(
+    h.get('hooks', [{}])[0].get('command', '') == stop_cmd
+    if isinstance(h, dict) else False
+    for h in stop_hooks
+)
+if not already:
+    stop_hooks.append({
+        'hooks': [{'type': 'command', 'command': stop_cmd, 'timeout': 5}]
+    })
+
+with open(path, 'w') as f:
+    json.dump(data, f, indent=4)
+    f.write('\n')
+" 2>/dev/null
+    success "Installed activity hooks (PostToolUse + Stop)"
+  elif command -v jq &>/dev/null; then
+    warn "Hook auto-config requires python3 — add hooks manually to ${BOLD}${settings_file}${RESET}"
+  else
+    warn "No python3 or jq — add hooks manually to ${BOLD}${settings_file}${RESET}"
+  fi
+}
+
+# ── Step 4: Install skill ───────────────────────────────────────────────────
 
 install_skill() {
-  step 3 "Installing /relay skill"
+  step 4 "Installing /relay skill"
 
   local skill_dir="$HOME/.claude/commands"
   local skill_path="${skill_dir}/relay.md"
@@ -586,10 +685,10 @@ SKILL_EOF
   success "Installed /relay command at ${DIM}${skill_path}${RESET}"
 }
 
-# ── Step 4: Scan and configure projects ──────────────────────────────────────
+# ── Step 5: Scan and configure projects ──────────────────────────────────────
 
 scan_and_configure_projects() {
-  step 4 "Scanning for Claude Code projects"
+  step 5 "Scanning for Claude Code projects"
 
   if [[ "$SKIP_PROJECTS" == true ]]; then
     info "Skipped (--skip-projects)"
@@ -638,7 +737,7 @@ scan_and_configure_projects() {
     info "No Claude Code projects found"
     info "You can manually add relay to any project's ${BOLD}.mcp.json${RESET} later:"
     echo
-    echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp?project=my-project\"}}}${RESET}"
+    echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp\"}}}${RESET}"
     return 0
   fi
 
@@ -729,7 +828,7 @@ configure_project() {
 
   local project_name
   project_name=$(echo "$(basename "$project_dir")" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//')
-  local relay_entry="{\"type\":\"http\",\"url\":\"http://localhost:${PORT}/mcp?project=${project_name}\"}"
+  local relay_entry="{\"type\":\"http\",\"url\":\"http://localhost:${PORT}/mcp\"}"
 
   if [[ -f "$mcp_path" ]]; then
     # Check if already configured
@@ -776,7 +875,7 @@ EOF
 # ── Step 5: Verify installation ─────────────────────────────────────────────
 
 verify_installation() {
-  step 5 "Verifying installation"
+  step 6 "Verifying installation"
 
   local bin_path="${BIN_DIR}/${BINARY_NAME}"
 
@@ -794,6 +893,13 @@ verify_installation() {
   local ar_path="${BIN_DIR}/ar"
   if [[ -L "$ar_path" ]]; then
     success "Shortcut: ${BOLD}ar${RESET} → agent-relay"
+  fi
+
+  # Check hooks
+  if [[ -x "$HOME/.claude/hooks/ingest-post-tool.sh" ]] && [[ -x "$HOME/.claude/hooks/ingest-stop.sh" ]]; then
+    success "Hooks: activity tracking installed"
+  else
+    warn "Hooks: activity tracking not found"
   fi
 
   # Check skill
@@ -853,7 +959,7 @@ print_summary() {
   info "CLI shortcut: ${BOLD}ar serve${RESET}, ${BOLD}ar status${RESET}, ${BOLD}ar agents${RESET} (alias for agent-relay)"
   echo
   info "Add relay to more projects by adding to ${BOLD}.mcp.json${RESET}:"
-  echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp?project=my-project\"}}}${RESET}"
+  echo "  ${DIM}{\"mcpServers\": {\"agent-relay\": {\"type\": \"http\", \"url\": \"http://localhost:${PORT}/mcp\"}}}${RESET}"
   echo
   info "Uninstall: ${DIM}curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s -- --uninstall${RESET}"
   echo
@@ -874,10 +980,11 @@ main() {
   # Check port conflict
   if lsof -i ":${PORT}" &>/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
     local existing_pid
-    existing_pid=$(lsof -t -i ":${PORT}" 2>/dev/null | head -1 || true)
+    existing_pid=$(lsof -t -i ":${PORT}" -sTCP:LISTEN 2>/dev/null | head -1 || \
+                   lsof -t -i ":${PORT}" 2>/dev/null | head -1 || true)
     if [[ -n "$existing_pid" ]]; then
       local existing_cmd
-      existing_cmd=$(ps -p "$existing_pid" -o comm= 2>/dev/null || echo "unknown")
+      existing_cmd=$(ps -p "$existing_pid" -o args= 2>/dev/null | head -1 || echo "unknown")
       if [[ "$existing_cmd" == *"agent-relay"* ]]; then
         info "Relay already running on port ${PORT} (PID ${existing_pid})"
       else
@@ -889,6 +996,7 @@ main() {
 
   install_binary || warn "Binary install incomplete — see above"
   install_service
+  install_hooks
   install_skill
   scan_and_configure_projects
   verify_installation || true
