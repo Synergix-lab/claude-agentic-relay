@@ -407,7 +407,8 @@ func TestTaskLifecycle(t *testing.T) {
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "Fix bug", "description": "fix the thing",
 	}))
-	task := parseJSON(t, dispatchRes)
+	dispatchBody := parseJSON(t, dispatchRes)
+	task := dispatchBody["task"].(map[string]any)
 	taskID := task["id"].(string)
 	if task["status"] != "pending" {
 		t.Errorf("expected pending, got %v", task["status"])
@@ -448,7 +449,7 @@ func TestTaskBlock(t *testing.T) {
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "task1",
 	}))
-	task := parseJSON(t, dispatchRes)
+	task := parseJSON(t, dispatchRes)["task"].(map[string]any)
 	taskID := task["id"].(string)
 
 	h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
@@ -470,7 +471,7 @@ func TestTaskCancel(t *testing.T) {
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "to cancel",
 	}))
-	task := parseJSON(t, dispatchRes)
+	task := parseJSON(t, dispatchRes)["task"].(map[string]any)
 	taskID := task["id"].(string)
 
 	cancelRes, _ := h.HandleCancelTask(ctx, call(map[string]any{
@@ -489,7 +490,7 @@ func TestGetTask(t *testing.T) {
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "get me",
 	}))
-	task := parseJSON(t, dispatchRes)
+	task := parseJSON(t, dispatchRes)["task"].(map[string]any)
 	taskID := task["id"].(string)
 
 	getRes, _ := h.HandleGetTask(ctx, call(map[string]any{
@@ -539,7 +540,7 @@ func TestArchiveTasks(t *testing.T) {
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "to archive",
 	}))
-	task := parseJSON(t, dispatchRes)
+	task := parseJSON(t, dispatchRes)["task"].(map[string]any)
 	taskID := task["id"].(string)
 
 	// Complete it first
@@ -811,7 +812,8 @@ func TestGoalLifecycle(t *testing.T) {
 	createRes, _ := h.HandleCreateGoal(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "title": "Ship v2", "type": "agent_goal",
 	}))
-	goal := parseJSON(t, createRes)
+	createBody := parseJSON(t, createRes)
+	goal := createBody["goal"].(map[string]any)
 	goalID := goal["id"].(string)
 	if goal["title"] != "Ship v2" {
 		t.Errorf("expected 'Ship v2', got %v", goal["title"])
@@ -969,7 +971,7 @@ func TestGoalCascade(t *testing.T) {
 	parentRes, _ := h.HandleCreateGoal(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "title": "Mission", "type": "mission",
 	}))
-	parent := parseJSON(t, parentRes)
+	parent := parseJSON(t, parentRes)["goal"].(map[string]any)
 	parentID := parent["id"].(string)
 
 	// Create child goal
@@ -1108,7 +1110,7 @@ func TestTaskSubtaskCompletion(t *testing.T) {
 	parentRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "Parent task",
 	}))
-	parent := parseJSON(t, parentRes)
+	parent := parseJSON(t, parentRes)["task"].(map[string]any)
 	parentID := parent["id"].(string)
 
 	// Dispatch subtask
@@ -1116,7 +1118,7 @@ func TestTaskSubtaskCompletion(t *testing.T) {
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "Subtask 1",
 		"parent_task_id": parentID,
 	}))
-	sub := parseJSON(t, subRes)
+	sub := parseJSON(t, subRes)["task"].(map[string]any)
 	subID := sub["id"].(string)
 
 	// Complete subtask flow
@@ -1143,15 +1145,17 @@ func TestTaskSubtaskCompletion(t *testing.T) {
 // --- Validation Tests (cross-cutting) ---
 
 func TestResolveProjectDefault(t *testing.T) {
+	ctx := context.Background()
 	req := call(map[string]any{})
-	if p := resolveProject(req); p != "default" {
+	if p := resolveProject(ctx, req); p != "default" {
 		t.Errorf("expected 'default', got %s", p)
 	}
 }
 
 func TestResolveAgentDefault(t *testing.T) {
+	ctx := context.Background()
 	req := call(map[string]any{})
-	if a := resolveAgent(req); a != "anonymous" {
+	if a := resolveAgent(ctx, req); a != "anonymous" {
 		t.Errorf("expected 'anonymous', got %s", a)
 	}
 }

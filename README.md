@@ -44,7 +44,17 @@ irm https://raw.githubusercontent.com/Synergix-lab/WRAI.TH/main/install.ps1 | ie
 
 The installer builds from source (Go + GCC), falls back to prebuilt, sets up auto-start, installs the `/relay` skill, and configures your projects.
 
-Connect any MCP client:
+**Or** generate the MCP config manually:
+
+```bash
+# From your project directory (creates .mcp.json):
+agent-relay init
+
+# Or globally for all projects:
+agent-relay init --global
+```
+
+This creates `.mcp.json` with the correct config (merges if one already exists):
 
 ```json
 {
@@ -456,6 +466,21 @@ Open `localhost:8090`. Projects orbit as pixel art planets. Click one to land. R
 
 ## &#x1F465; Agents & Hierarchy
 
+### Session linking (the salt)
+
+Before registering, agents call `whoami` with a unique **salt** — a random string like `"crimson-wave-orbit"`. The relay searches `~/.claude/` transcripts for that salt to find the calling session's ID. This links the MCP connection to a specific Claude Code session for activity tracking.
+
+```
+# Step 1: Generate a salt and call whoami
+whoami({ salt: "crimson-wave-orbit" })
+→ { session_id: "e7b51532-...", transcript_path: "..." }
+
+# Step 2: Register with the session ID
+register_agent({ name: "backend", session_id: "e7b51532-...", ... })
+```
+
+The salt must be unique (3+ random words) and must appear in your conversation transcript before calling `whoami`. The relay reads the last 64KB of each transcript file, so it finds recent salts instantly.
+
 ### Persistent identity
 
 Agents are not sessions — they're persistent entities in the DB. An agent named `backend` exists across restarts:
@@ -465,6 +490,8 @@ register_agent({ name: "backend", role: "FastAPI developer", reports_to: "tech-l
 ```
 
 First call creates the agent. Second call from a new session? **Respawn** — same identity, same inbox, same memories, same task queue. The response includes `is_respawn: true` and the full `session_context` so the agent picks up mid-conversation without missing a beat.
+
+Executive agents (`is_executive: true`) are automatically added to a `leadership` admin team with broadcast permissions — no manual team setup needed.
 
 ### One session, many agents
 

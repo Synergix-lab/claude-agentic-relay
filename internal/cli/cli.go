@@ -20,6 +20,8 @@ func Run(args []string) {
 	switch cmd {
 	case "help":
 		printUsage()
+	case "init":
+		runInit(rest)
 	case "status":
 		runStatus()
 	case "agents":
@@ -89,6 +91,10 @@ func printUsage() {
 	fmt.Print(`usage: agent-relay <command> [-p <project>]
 
 commands:
+  init [project] [flags]       create .mcp.json for Claude Code
+    --global                   write to ~/.claude/.mcp.json instead
+    --port <port>              relay port (default: 8090)
+    --host <host>              relay host (default: localhost)
   serve                        start the relay server
   status                       relay status & summary
   agents [-p project]          list registered agents
