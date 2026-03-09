@@ -64,7 +64,7 @@ func TestConcurrentReadsAndWrite(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", n), "{}", nil, nil)
+			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", n), "{}", "P2", nil, nil)
 			if err != nil {
 				errors.Add(1)
 			}
@@ -99,7 +99,7 @@ func TestConcurrentWriters(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("write-%d", idx), "{}", nil, nil)
+			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("write-%d", idx), "{}", "P2", nil, nil)
 			if err != nil {
 				errors.Add(1)
 				t.Logf("write error: %v", err)
@@ -124,7 +124,7 @@ func TestOptimizeNoCorruption(t *testing.T) {
 	// Insert some data
 	d.RegisterAgent("default", "bot-a", "test", "", nil, nil, false, nil)
 	for i := 0; i < 10; i++ {
-		d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", i), "{}", nil, nil)
+		d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", i), "{}", "P2", nil, nil)
 	}
 
 	// Run optimize
@@ -235,7 +235,7 @@ func TestWritesDontUseManyConns(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("serial-%d", idx), "{}", nil, nil)
+			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("serial-%d", idx), "{}", "P2", nil, nil)
 			if err != nil {
 				errors.Add(1)
 				t.Logf("write error: %v", err)
@@ -317,7 +317,7 @@ func TestCloseCheckpoint(t *testing.T) {
 	// Insert data to create WAL entries
 	d.RegisterAgent("default", "bot-a", "test", "", nil, nil, false, nil)
 	for i := 0; i < 50; i++ {
-		d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", i), "{}", nil, nil)
+		d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", i), "{}", "P2", nil, nil)
 	}
 
 	// Close should TRUNCATE checkpoint
@@ -348,7 +348,7 @@ func TestHeavyLoad(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			_, err := d.InsertMessage("default", fmt.Sprintf("agent-%d", idx), "target", "notification", "test", "heavy load", "{}", nil, nil)
+			_, err := d.InsertMessage("default", fmt.Sprintf("agent-%d", idx), "target", "notification", "test", "heavy load", "{}", "P2", nil, nil)
 			if err != nil {
 				writeErrors.Add(1)
 			}

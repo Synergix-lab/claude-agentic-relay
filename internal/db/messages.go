@@ -9,8 +9,11 @@ import (
 	"github.com/google/uuid"
 )
 
-func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadata string, replyTo, conversationID *string) (*models.Message, error) {
+func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadata, priority string, replyTo, conversationID *string) (*models.Message, error) {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+	if priority == "" {
+		priority = "P2"
+	}
 
 	msg := &models.Message{
 		ID:             uuid.New().String(),
@@ -24,11 +27,12 @@ func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadat
 		CreatedAt:      now,
 		ConversationID: conversationID,
 		Project:        project,
+		Priority:       priority,
 	}
 
 	_, err := d.conn.Exec(
-		"INSERT INTO messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, conversation_id, project) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		msg.ID, msg.From, msg.To, msg.ReplyTo, msg.Type, msg.Subject, msg.Content, msg.Metadata, msg.CreatedAt, msg.ConversationID, msg.Project,
+		"INSERT INTO messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, conversation_id, project, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		msg.ID, msg.From, msg.To, msg.ReplyTo, msg.Type, msg.Subject, msg.Content, msg.Metadata, msg.CreatedAt, msg.ConversationID, msg.Project, msg.Priority,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert message: %w", err)
@@ -42,7 +46,7 @@ func (d *DB) GetInbox(project, agentName string, unreadOnly bool, limit int) ([]
 	}
 
 	query := `
-		SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id, m.project, m.task_id
+		SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id, m.project, m.task_id, m.priority
 		FROM messages m
 		WHERE m.project = ?
 			AND (
@@ -64,7 +68,7 @@ func (d *DB) GetInbox(project, agentName string, unreadOnly bool, limit int) ([]
 		args = append(args, agentName)
 	}
 
-	query += " ORDER BY m.created_at DESC LIMIT ?"
+	query += " ORDER BY m.priority ASC, m.created_at DESC LIMIT ?"
 	args = append(args, limit)
 
 	return d.queryMessages(query, args...)
@@ -86,10 +90,10 @@ func (d *DB) GetThread(messageID string) ([]models.Message, error) {
 
 	query := `
 		WITH RECURSIVE thread AS (
-			SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id
+			SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority
 			FROM messages WHERE id = ?
 			UNION ALL
-			SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id, m.project, m.task_id
+			SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id, m.project, m.task_id, m.priority
 			FROM messages m
 			JOIN thread t ON m.reply_to = t.id
 		)
@@ -152,7 +156,7 @@ func (d *DB) MarkRead(messageIDs []string, agentName, project string) (int, erro
 
 func (d *DB) GetMessage(id string) (*models.Message, error) {
 	msgs, err := d.queryMessages(
-		"SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id FROM messages WHERE id = ?",
+		"SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority FROM messages WHERE id = ?",
 		id,
 	)
 	if err != nil {
@@ -199,7 +203,7 @@ func (d *DB) queryMessages(query string, args ...any) ([]models.Message, error) 
 	var messages []models.Message
 	for rows.Next() {
 		var m models.Message
-		if err := rows.Scan(&m.ID, &m.From, &m.To, &m.ReplyTo, &m.Type, &m.Subject, &m.Content, &m.Metadata, &m.CreatedAt, &m.ReadAt, &m.ConversationID, &m.Project, &m.TaskID); err != nil {
+		if err := rows.Scan(&m.ID, &m.From, &m.To, &m.ReplyTo, &m.Type, &m.Subject, &m.Content, &m.Metadata, &m.CreatedAt, &m.ReadAt, &m.ConversationID, &m.Project, &m.TaskID, &m.Priority); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		messages = append(messages, m)

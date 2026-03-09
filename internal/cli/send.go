@@ -31,7 +31,7 @@ func runSend(args []string) {
 	d := openDBReadWrite()
 	defer d.Close()
 
-	msg, err := d.InsertMessage(project, from, to, msgType, subject, content, "{}", nil, nil)
+	msg, err := d.InsertMessage(project, from, to, msgType, subject, content, "{}", "P2", nil, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

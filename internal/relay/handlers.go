@@ -147,6 +147,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 	metadata := req.GetString("metadata", "{}")
 	replyTo := optionalString(req.GetString("reply_to", ""))
 	conversationID := optionalString(req.GetString("conversation_id", ""))
+	priority := mapPriority(req.GetString("priority", "P2"))
 
 	// Support "to": "conversation:<id>" shorthand
 	if conversationID == nil && strings.HasPrefix(to, "conversation:") {
@@ -193,7 +194,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 			return mcp.NewToolResultError(fmt.Sprintf("team '%s' not found", teamSlug)), nil
 		}
 
-		msg, err := h.db.InsertMessage(project, from, to, msgType, subject, content, metadata, replyTo, conversationID)
+		msg, err := h.db.InsertMessage(project, from, to, msgType, subject, content, metadata, priority, replyTo, conversationID)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to send message: %v", err)), nil
 		}
@@ -223,7 +224,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 		}
 	}
 
-	msg, err := h.db.InsertMessage(project, from, to, msgType, subject, content, metadata, replyTo, conversationID)
+	msg, err := h.db.InsertMessage(project, from, to, msgType, subject, content, metadata, priority, replyTo, conversationID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to send message: %v", err)), nil
 	}
@@ -271,6 +272,7 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 			"subject":    m.Subject,
 			"content":    content,
 			"created_at": m.CreatedAt,
+			"priority":   m.Priority,
 		}
 		if m.ReplyTo != nil {
 			entry["reply_to"] = *m.ReplyTo
@@ -654,6 +656,22 @@ func optionalStringLower(s string) *string {
 	}
 	l := strings.ToLower(s)
 	return &l
+}
+
+// mapPriority normalizes MACP aliases to P0-P3.
+func mapPriority(p string) string {
+	switch strings.ToLower(p) {
+	case "interrupt", "p0":
+		return "P0"
+	case "steering", "p1":
+		return "P1"
+	case "advisory", "p2", "":
+		return "P2"
+	case "info", "p3":
+		return "P3"
+	default:
+		return "P2"
+	}
 }
 
 func sessionFromContext(ctx context.Context) clientSession {

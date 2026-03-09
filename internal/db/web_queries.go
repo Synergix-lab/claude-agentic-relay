@@ -55,7 +55,7 @@ func (d *DB) GetAllRecentMessages(project string, limit int) ([]models.Message, 
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority
 		FROM messages
 		WHERE project = ?
 		ORDER BY created_at ASC
@@ -71,7 +71,7 @@ func (d *DB) GetMessagesSince(project, since string, limit int) ([]models.Messag
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority
 		FROM messages
 		WHERE project = ? AND created_at > ?
 		ORDER BY created_at ASC
@@ -106,7 +106,7 @@ func (d *DB) GetAllRecentMessagesAllProjects(limit int) ([]models.Message, error
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority
 		FROM messages
 		ORDER BY created_at ASC
 		LIMIT ?
@@ -121,7 +121,7 @@ func (d *DB) GetMessagesSinceAllProjects(since string, limit int) ([]models.Mess
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority
 		FROM messages
 		WHERE created_at > ?
 		ORDER BY created_at ASC

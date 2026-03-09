@@ -215,7 +215,7 @@ func TestAPIGetOrgTree(t *testing.T) {
 func TestAPIGetAllMessages(t *testing.T) {
 	r := testRelay(t)
 	r.DB.RegisterAgent("p1", "bot-a", "dev", "", nil, nil, false, nil)
-	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "hello", "{}", nil, nil)
+	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "hello", "{}", "P2", nil, nil)
 
 	w := doAPI(r, "GET", "/messages/all?project=p1", "")
 	if w.Code != http.StatusOK {
@@ -231,8 +231,8 @@ func TestAPIGetAllMessagesAllProjects(t *testing.T) {
 	r := testRelay(t)
 	r.DB.RegisterAgent("p1", "bot-a", "dev", "", nil, nil, false, nil)
 	r.DB.RegisterAgent("p2", "bot-b", "qa", "", nil, nil, false, nil)
-	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "hello", "{}", nil, nil)
-	r.DB.InsertMessage("p2", "bot-b", "bot-a", "notification", "test", "hey", "{}", nil, nil)
+	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "hello", "{}", "P2", nil, nil)
+	r.DB.InsertMessage("p2", "bot-b", "bot-a", "notification", "test", "hey", "{}", "P2", nil, nil)
 
 	w := doAPI(r, "GET", "/messages/all-projects", "")
 	if w.Code != http.StatusOK {
@@ -292,7 +292,7 @@ func TestAPIGetConversationMessages(t *testing.T) {
 	r.DB.RegisterAgent("p1", "bot-a", "dev", "", nil, nil, false, nil)
 	r.DB.RegisterAgent("p1", "bot-b", "qa", "", nil, nil, false, nil)
 	conv, _ := r.DB.CreateConversation("p1", "test", "bot-a", []string{"bot-a", "bot-b"})
-	r.DB.InsertMessage("p1", "bot-a", "", "notification", "test", "hello", "{}", nil, &conv.ID)
+	r.DB.InsertMessage("p1", "bot-a", "", "notification", "test", "hello", "{}", "P2", nil, &conv.ID)
 
 	w := doAPI(r, "GET", "/conversations/"+conv.ID+"/messages", "")
 	if w.Code != http.StatusOK {
@@ -634,7 +634,7 @@ func TestAPIGetAllConversations(t *testing.T) {
 func TestAPIGetLatestMessages(t *testing.T) {
 	r := testRelay(t)
 	r.DB.RegisterAgent("p1", "bot-a", "dev", "", nil, nil, false, nil)
-	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "recent msg", "{}", nil, nil)
+	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "recent msg", "{}", "P2", nil, nil)
 
 	w := doAPI(r, "GET", "/messages/latest?project=p1", "")
 	if w.Code != http.StatusOK {
@@ -649,7 +649,7 @@ func TestAPIGetLatestMessages(t *testing.T) {
 func TestAPIGetLatestMessagesAllProjects(t *testing.T) {
 	r := testRelay(t)
 	r.DB.RegisterAgent("p1", "bot-a", "dev", "", nil, nil, false, nil)
-	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "msg1", "{}", nil, nil)
+	r.DB.InsertMessage("p1", "bot-a", "bot-b", "notification", "test", "msg1", "{}", "P2", nil, nil)
 
 	w := doAPI(r, "GET", "/messages/latest-all", "")
 	if w.Code != http.StatusOK {

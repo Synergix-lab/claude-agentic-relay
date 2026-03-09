@@ -14,4 +14,5 @@ type Message struct {
 	ConversationID *string `json:"conversation_id,omitempty"`
 	Project        string  `json:"project"`
 	TaskID         *string `json:"task_id,omitempty"`
+	Priority       string  `json:"priority"`
 }

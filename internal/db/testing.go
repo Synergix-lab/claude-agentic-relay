@@ -17,5 +17,11 @@ func NewTestDB(path string) (*DB, error) {
 		conn.Close()
 		return nil, err
 	}
-	return &DB{conn: conn, path: path}, nil
+	reader, err := sql.Open("sqlite3", path+"?mode=ro&_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON")
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	reader.SetMaxOpenConns(10)
+	return &DB{conn: conn, reader: reader, path: path}, nil
 }

@@ -49,6 +49,10 @@ func sendMessageTool() mcp.Tool {
 		mcp.WithString("reply_to", mcp.Description("Message ID to reply to (for threading)")),
 		mcp.WithString("metadata", mcp.Description("JSON string of additional metadata")),
 		mcp.WithString("conversation_id", mcp.Description("Send message to a conversation instead of a single agent")),
+		mcp.WithString("priority",
+			mcp.Description("Message priority. P0=interrupt (critical), P1=steering (important), P2=advisory (default), P3=info (low). MACP aliases accepted."),
+			mcp.Enum("P0", "P1", "P2", "P3", "interrupt", "steering", "advisory", "info"),
+		),
 	)
 }
 

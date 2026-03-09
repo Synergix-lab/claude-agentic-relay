@@ -240,6 +240,7 @@ func migrate(conn *sql.DB) error {
 		"conversation_id": "TEXT",
 		"project":         "TEXT NOT NULL DEFAULT 'default'",
 		"task_id":         "TEXT",
+		"priority":        "TEXT NOT NULL DEFAULT 'P2'",
 	})
 
 	ensureColumns(conn, "conversations", map[string]string{
@@ -252,6 +253,7 @@ func migrate(conn *sql.DB) error {
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project)`)
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`)
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id)`)
+	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_priority ON messages(priority)`)
 	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project)`)
 
 	// Remove old global UNIQUE constraint on agents.name (existing DBs only).

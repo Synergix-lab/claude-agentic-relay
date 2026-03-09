@@ -90,7 +90,7 @@ func (d *DB) GetConversationMessages(conversationID string, limit int) ([]models
 	}
 
 	query := `
-		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id
+		SELECT id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, read_at, conversation_id, project, task_id, priority
 		FROM messages
 		WHERE conversation_id = ?
 		ORDER BY created_at ASC
