@@ -96,13 +96,13 @@ func (h *Handlers) HandleWhoami(ctx context.Context, req mcp.CallToolRequest) (*
 
 func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
-	name := req.GetString("name", "")
+	name := strings.ToLower(req.GetString("name", ""))
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
 	}
 	role := req.GetString("role", "")
 	description := req.GetString("description", "")
-	reportsTo := optionalString(req.GetString("reports_to", ""))
+	reportsTo := optionalStringLower(req.GetString("reports_to", ""))
 	profileSlug := optionalString(req.GetString("profile_slug", ""))
 	isExecutive := req.GetBool("is_executive", false)
 	sessionID := optionalString(req.GetString("session_id", ""))
@@ -136,7 +136,7 @@ func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequ
 func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
 	from := resolveAgent(req)
-	to := req.GetString("to", "")
+	to := strings.ToLower(req.GetString("to", ""))
 	msgType := req.GetString("type", "notification")
 	subject := req.GetString("subject", "")
 	content := req.GetString("content", "")
@@ -392,9 +392,13 @@ func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToo
 		return mcp.NewToolResultError("title is required"), nil
 	}
 
-	members := req.GetStringSlice("members", nil)
-	if len(members) == 0 {
+	rawMembers := req.GetStringSlice("members", nil)
+	if len(rawMembers) == 0 {
 		return mcp.NewToolResultError("at least one other member is required"), nil
+	}
+	members := make([]string, len(rawMembers))
+	for i, m := range rawMembers {
+		members[i] = strings.ToLower(m)
 	}
 
 	// Ensure creator is included in members
@@ -512,7 +516,7 @@ func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallT
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
 	}
-	invitee := req.GetString("agent_name", "")
+	invitee := strings.ToLower(req.GetString("agent_name", ""))
 	if invitee == "" {
 		return mcp.NewToolResultError("agent_name is required"), nil
 	}
@@ -619,9 +623,10 @@ func resolveProject(req mcp.CallToolRequest) string {
 }
 
 // resolveAgent returns the agent name from the explicit `as` tool parameter.
+// Names are lowercased for case-insensitive matching.
 func resolveAgent(req mcp.CallToolRequest) string {
 	if as := req.GetString("as", ""); as != "" {
-		return as
+		return strings.ToLower(as)
 	}
 	return "anonymous"
 }
@@ -641,6 +646,14 @@ func optionalString(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func optionalStringLower(s string) *string {
+	if s == "" {
+		return nil
+	}
+	l := strings.ToLower(s)
+	return &l
 }
 
 func sessionFromContext(ctx context.Context) clientSession {
@@ -1217,7 +1230,7 @@ func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest)
 
 func (h *Handlers) HandleDeactivateAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
-	name := req.GetString("name", "")
+	name := strings.ToLower(req.GetString("name", ""))
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
 	}
@@ -1290,7 +1303,7 @@ func (h *Handlers) HandleDeleteBoard(ctx context.Context, req mcp.CallToolReques
 
 func (h *Handlers) HandleDeleteAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
-	name := req.GetString("name", "")
+	name := strings.ToLower(req.GetString("name", ""))
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
 	}
@@ -1760,7 +1773,7 @@ func (h *Handlers) HandleListTeams(ctx context.Context, req mcp.CallToolRequest)
 func (h *Handlers) HandleAddTeamMember(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
 	teamSlug := req.GetString("team", "")
-	agentName := req.GetString("agent_name", "")
+	agentName := strings.ToLower(req.GetString("agent_name", ""))
 	role := req.GetString("role", "member")
 
 	if teamSlug == "" || agentName == "" {
@@ -1794,7 +1807,7 @@ func (h *Handlers) HandleAddTeamMember(ctx context.Context, req mcp.CallToolRequ
 func (h *Handlers) HandleRemoveTeamMember(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
 	teamSlug := req.GetString("team", "")
-	agentName := req.GetString("agent_name", "")
+	agentName := strings.ToLower(req.GetString("agent_name", ""))
 
 	if teamSlug == "" || agentName == "" {
 		return mcp.NewToolResultError("team and agent_name are required"), nil
@@ -1848,7 +1861,7 @@ func (h *Handlers) HandleGetTeamInbox(ctx context.Context, req mcp.CallToolReque
 func (h *Handlers) HandleAddNotifyChannel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
 	agent := resolveAgent(req)
-	target := req.GetString("target", "")
+	target := strings.ToLower(req.GetString("target", ""))
 
 	if target == "" {
 		return mcp.NewToolResultError("target is required"), nil

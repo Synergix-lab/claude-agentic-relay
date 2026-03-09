@@ -2,6 +2,7 @@ package db
 
 import (
 	"agent-relay/internal/models"
+	"agent-relay/internal/normalize"
 	"database/sql"
 	"fmt"
 	"time"
@@ -144,6 +145,7 @@ func (d *DB) transitionTask(taskID, agentName, project, newStatus string, result
 		)
 	case "done":
 		task.CompletedAt = &now
+		result = normalizePtr(result)
 		task.Result = result
 		_, err = d.conn.Exec(
 			"UPDATE tasks SET status = ?, result = ?, completed_at = ? WHERE id = ? AND project = ?",
@@ -532,4 +534,12 @@ func (d *DB) ArchiveTasks(project, status, boardID string) (int64, error) {
 		return 0, fmt.Errorf("archive tasks: %w", err)
 	}
 	return result.RowsAffected()
+}
+
+func normalizePtr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	v := normalize.JSONKeys(*s)
+	return &v
 }
