@@ -86,6 +86,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 	case path == "/file-locks" && req.Method == http.MethodGet:
 		r.apiGetFileLocks(w, req)
 	// Task endpoints
+	case path == "/tasks/human" && req.Method == http.MethodGet:
+		r.apiGetHumanTasks(w, req)
 	case path == "/tasks/all" && req.Method == http.MethodGet:
 		r.apiGetAllTasks(w)
 	case path == "/tasks" && req.Method == http.MethodGet:
@@ -909,6 +911,23 @@ func (r *Relay) apiGetTasks(w http.ResponseWriter, req *http.Request) {
 	tasks, err := r.DB.ListTasks(project, status, profile, priority, "", boardID, 100)
 	if err != nil {
 		http.Error(w, `{"error":"failed to list tasks"}`, http.StatusInternalServerError)
+		return
+	}
+	if tasks == nil {
+		tasks = []models.Task{}
+	}
+	writeJSON(w, tasks)
+}
+
+func (r *Relay) apiGetHumanTasks(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+	status := req.URL.Query().Get("status")
+	if status == "" {
+		status = "" // all statuses
+	}
+	tasks, err := r.DB.ListTasks(project, status, "human", "", "", "", 100)
+	if err != nil {
+		http.Error(w, `{"error":"failed to list human tasks"}`, http.StatusInternalServerError)
 		return
 	}
 	if tasks == nil {

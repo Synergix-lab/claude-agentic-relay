@@ -95,7 +95,7 @@ func (h *Handlers) HandleWhoami(ctx context.Context, req mcp.CallToolRequest) (*
 }
 
 func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	name := strings.ToLower(req.GetString("name", ""))
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
@@ -114,6 +114,19 @@ func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(fmt.Sprintf("failed to register agent: %v", err)), nil
 	}
 
+	// Auto-create admin team + add executive agent (fixes broadcast permission UX)
+	var autoAdminTeam *string
+	if isExecutive {
+		adminTeam, _ := h.db.GetTeam(project, "leadership")
+		if adminTeam == nil {
+			adminTeam, _ = h.db.CreateTeam("Leadership", "leadership", project, "Auto-created admin team for executive agents", "admin", nil, nil)
+		}
+		if adminTeam != nil {
+			_ = h.db.AddTeamMember(adminTeam.ID, name, project, "admin")
+			autoAdminTeam = &adminTeam.Slug
+		}
+	}
+
 	// Register the session for push notifications
 	if sess := sessionFromContext(ctx); sess != nil {
 		h.registry.Register(project, name, sess.SessionID())
@@ -129,15 +142,20 @@ func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequ
 	}
 	h.events.Emit(MCPEvent{Type: "register", Action: action, Agent: name, Project: project, Label: role})
 
-	return resultJSON(map[string]any{
+	resp := map[string]any{
 		"agent":           agent,
 		"session_context": sessionCtx,
-	})
+	}
+	if autoAdminTeam != nil {
+		resp["auto_admin_team"] = *autoAdminTeam
+		resp["hint"] = "You were auto-added to the 'leadership' admin team (broadcast enabled). Use send_message(to='*') to broadcast."
+	}
+	return resultJSON(resp)
 }
 
 func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	from := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	from := resolveAgent(ctx, req)
 	to := strings.ToLower(req.GetString("to", ""))
 	msgType := req.GetString("type", "notification")
 	subject := req.GetString("subject", "")
@@ -225,7 +243,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 		if hasTeams {
 			allowed, _ := h.db.CanMessage(project, from, "*")
 			if !allowed {
-				return mcp.NewToolResultError("broadcast requires membership in an 'admin' type team"), nil
+				return mcp.NewToolResultError("broadcast requires membership in an 'admin' type team. Fix: register with is_executive=true (auto-creates admin team), or manually: create_team(type='admin') then add_team_member()"), nil
 			}
 		}
 	}
@@ -252,8 +270,8 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 }
 
 func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	unreadOnly := req.GetBool("unread_only", true)
 	limit := req.GetInt("limit", 10)
 	fullContent := req.GetBool("full_content", false)
@@ -352,7 +370,7 @@ func (h *Handlers) HandleGetThread(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleListAgents(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 
 	agents, err := h.db.ListAgents(project)
 	if err != nil {
@@ -397,8 +415,8 @@ func (h *Handlers) HandleListAgents(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 
 	// Support marking a whole conversation as read
 	convID := req.GetString("conversation_id", "")
@@ -428,8 +446,8 @@ func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) 
 }
 
 func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	title := req.GetString("title", "")
 	if title == "" {
 		return mcp.NewToolResultError("title is required"), nil
@@ -468,8 +486,8 @@ func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToo
 }
 
 func (h *Handlers) HandleListConversations(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 
 	convs, err := h.db.ListConversations(project, agent)
 	if err != nil {
@@ -487,7 +505,7 @@ func (h *Handlers) HandleListConversations(ctx context.Context, req mcp.CallTool
 }
 
 func (h *Handlers) HandleGetConversationMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := resolveAgent(req)
+	agent := resolveAgent(ctx, req)
 	convID := req.GetString("conversation_id", "")
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
@@ -553,8 +571,8 @@ func (h *Handlers) HandleGetConversationMessages(ctx context.Context, req mcp.Ca
 }
 
 func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	convID := req.GetString("conversation_id", "")
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
@@ -587,8 +605,8 @@ func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallT
 }
 
 func (h *Handlers) HandleLeaveConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	convID := req.GetString("conversation_id", "")
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
@@ -621,7 +639,7 @@ func (h *Handlers) HandleLeaveConversation(ctx context.Context, req mcp.CallTool
 }
 
 func (h *Handlers) HandleArchiveConversation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	convID := req.GetString("conversation_id", "")
 	if convID == "" {
 		return mcp.NewToolResultError("conversation_id is required"), nil
@@ -634,7 +652,7 @@ func (h *Handlers) HandleArchiveConversation(ctx context.Context, req mcp.CallTo
 	h.events.Emit(MCPEvent{
 		Type:    "conversation",
 		Action:  "archived",
-		Agent:   resolveAgent(req),
+		Agent:   resolveAgent(ctx, req),
 		Project: project,
 		Label:   convID,
 	})
@@ -657,21 +675,23 @@ func (h *Handlers) notifyConversation(project, conversationID, senderName, subje
 	}
 }
 
-// resolveProject returns the project from the explicit `project` tool parameter.
-func resolveProject(req mcp.CallToolRequest) string {
+// resolveProject returns the project from the explicit `project` tool parameter,
+// falling back to the HTTP context default (from ?project= URL param).
+func resolveProject(ctx context.Context, req mcp.CallToolRequest) string {
 	if p := req.GetString("project", ""); p != "" {
 		return p
 	}
-	return "default"
+	return ProjectFromContext(ctx)
 }
 
-// resolveAgent returns the agent name from the explicit `as` tool parameter.
+// resolveAgent returns the agent name from the explicit `as` tool parameter,
+// falling back to the HTTP context default (from ?agent= URL param).
 // Names are lowercased for case-insensitive matching.
-func resolveAgent(req mcp.CallToolRequest) string {
+func resolveAgent(ctx context.Context, req mcp.CallToolRequest) string {
 	if as := req.GetString("as", ""); as != "" {
 		return strings.ToLower(as)
 	}
-	return "anonymous"
+	return AgentFromContext(ctx)
 }
 
 // helpers
@@ -697,6 +717,33 @@ func optionalStringLower(s string) *string {
 	}
 	l := strings.ToLower(s)
 	return &l
+}
+
+// normalizeJSONArrayParam handles profile parameters that can be either a JSON string
+// (e.g. "[\"a\",\"b\"]") or a native JSON array from the MCP client. Returns a JSON string.
+func normalizeJSONArrayParam(req mcp.CallToolRequest, key string) string {
+	// First try as string (the documented format)
+	if s := req.GetString(key, ""); s != "" {
+		// Validate it's valid JSON
+		var check json.RawMessage
+		if json.Unmarshal([]byte(s), &check) == nil {
+			return s
+		}
+		// Not valid JSON — wrap as a single-element array
+		b, _ := json.Marshal([]string{s})
+		return string(b)
+	}
+	// Try to extract the raw argument value — it might be a native array
+	if args := req.GetArguments(); args != nil {
+		if raw, exists := args[key]; exists {
+			// Re-marshal whatever the MCP client sent (array, object, etc.)
+			b, err := json.Marshal(raw)
+			if err == nil {
+				return string(b)
+			}
+		}
+	}
+	return "[]"
 }
 
 // mapPriority normalizes MACP aliases to P0-P3.
@@ -731,8 +778,8 @@ const sessionKey contextKey = "mcp_session"
 // --- Memory handlers ---
 
 func (h *Handlers) HandleSetMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	key := req.GetString("key", "")
 	if key == "" {
 		return mcp.NewToolResultError("key is required"), nil
@@ -767,8 +814,8 @@ func (h *Handlers) HandleSetMemory(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleGetMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	key := req.GetString("key", "")
 	if key == "" {
 		return mcp.NewToolResultError("key is required"), nil
@@ -797,8 +844,8 @@ func (h *Handlers) HandleGetMemory(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleSearchMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	query := req.GetString("query", "")
 	if query == "" {
 		return mcp.NewToolResultError("query is required"), nil
@@ -844,7 +891,7 @@ func (h *Handlers) HandleSearchMemory(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleListMemories(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	scope := req.GetString("scope", "")
 	agentFilter := req.GetString("agent", "")
 	tags := req.GetStringSlice("tags", nil)
@@ -853,7 +900,7 @@ func (h *Handlers) HandleListMemories(ctx context.Context, req mcp.CallToolReque
 	// Bug fix: scope=agent must be filtered by the calling agent to prevent leaking
 	// other agents' private memories. If no explicit agent filter, use the caller's identity.
 	if scope == "agent" && agentFilter == "" {
-		agentFilter = resolveAgent(req)
+		agentFilter = resolveAgent(ctx, req)
 	}
 
 	memories, err := h.db.ListMemories(project, scope, agentFilter, tags, limit)
@@ -893,8 +940,8 @@ func (h *Handlers) HandleListMemories(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleDeleteMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	key := req.GetString("key", "")
 	if key == "" {
 		return mcp.NewToolResultError("key is required"), nil
@@ -913,8 +960,8 @@ func (h *Handlers) HandleDeleteMemory(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleResolveConflict(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	key := req.GetString("key", "")
 	if key == "" {
 		return mcp.NewToolResultError("key is required"), nil
@@ -940,7 +987,7 @@ func (h *Handlers) HandleResolveConflict(ctx context.Context, req mcp.CallToolRe
 // --- Profile handlers ---
 
 func (h *Handlers) HandleRegisterProfile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	slug := req.GetString("slug", "")
 	if slug == "" {
 		return mcp.NewToolResultError("slug is required"), nil
@@ -951,9 +998,9 @@ func (h *Handlers) HandleRegisterProfile(ctx context.Context, req mcp.CallToolRe
 	}
 	role := req.GetString("role", "")
 	contextPack := req.GetString("context_pack", "")
-	soulKeys := req.GetString("soul_keys", "[]")
-	skills := req.GetString("skills", "[]")
-	vaultPaths := req.GetString("vault_paths", "[]")
+	soulKeys := normalizeJSONArrayParam(req, "soul_keys")
+	skills := normalizeJSONArrayParam(req, "skills")
+	vaultPaths := normalizeJSONArrayParam(req, "vault_paths")
 
 	profile, err := h.db.RegisterProfile(project, slug, name, role, contextPack, soulKeys, skills, vaultPaths)
 	if err != nil {
@@ -963,7 +1010,7 @@ func (h *Handlers) HandleRegisterProfile(ctx context.Context, req mcp.CallToolRe
 }
 
 func (h *Handlers) HandleGetProfile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	slug := req.GetString("slug", "")
 	if slug == "" {
 		return mcp.NewToolResultError("slug is required"), nil
@@ -980,7 +1027,7 @@ func (h *Handlers) HandleGetProfile(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleListProfiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 
 	profiles, err := h.db.ListProfiles(project)
 	if err != nil {
@@ -999,8 +1046,8 @@ func (h *Handlers) HandleListProfiles(ctx context.Context, req mcp.CallToolReque
 // --- Task handlers ---
 
 func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	profile := req.GetString("profile", "")
 	if profile == "" {
 		return mcp.NewToolResultError("profile is required"), nil
@@ -1015,6 +1062,32 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 	boardID := optionalString(req.GetString("board_id", ""))
 	goalID := optionalString(req.GetString("goal_id", ""))
 
+	// Auto-create "human" profile if dispatching to it for the first time
+	if profile == "human" {
+		existing, _ := h.db.GetProfile(project, "human")
+		if existing == nil {
+			_, _ = h.db.RegisterProfile(project, "human", "Human Operator",
+				"Tasks that require human action (API keys, approvals, purchases, manual config)",
+				"You are the human operator. Complete these tasks outside the relay.",
+				"[]", "[]", "[]")
+		}
+	}
+
+	// Auto-create a default "backlog" board if none specified and none exist
+	var autoBoard *models.Board
+	if boardID == nil {
+		boards, _ := h.db.ListBoards(project)
+		if len(boards) == 0 {
+			autoBoard, _ = h.db.CreateBoard(project, "Backlog", "backlog", "Auto-created default board", agent)
+			if autoBoard != nil {
+				boardID = &autoBoard.ID
+			}
+		} else {
+			// Use the first existing board as default
+			boardID = &boards[0].ID
+		}
+	}
+
 	task, err := h.db.DispatchTask(project, profile, agent, title, description, priority, parentTaskID, boardID, goalID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to dispatch task: %v", err)), nil
@@ -1027,6 +1100,12 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 
 	h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: profile, Label: title})
 
+	resp := map[string]any{"task": task}
+	if autoBoard != nil {
+		resp["auto_board"] = autoBoard
+		resp["hint"] = fmt.Sprintf("Auto-created 'backlog' board (id: %s) since no boards existed.", autoBoard.ID)
+	}
+
 	// Dedup warning: check for similar active tasks on same profile
 	similar, _ := h.db.FindSimilarTasks(project, profile, title)
 	if len(similar) > 0 {
@@ -1038,22 +1117,17 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 			}
 		}
 		if len(dupes) > 0 {
-			resp := map[string]any{
-				"task":    task,
-				"warning": fmt.Sprintf("Found %d similar active task(s) on profile '%s'", len(dupes), profile),
-				"similar": dupes,
-			}
-			data, _ := json.Marshal(resp)
-			return mcp.NewToolResultText(string(data)), nil
+			resp["warning"] = fmt.Sprintf("Found %d similar active task(s) on profile '%s'", len(dupes), profile)
+			resp["similar"] = dupes
 		}
 	}
 
-	return resultJSON(task)
+	return resultJSON(resp)
 }
 
 func (h *Handlers) HandleClaimTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
@@ -1068,8 +1142,8 @@ func (h *Handlers) HandleClaimTask(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleStartTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
@@ -1084,8 +1158,8 @@ func (h *Handlers) HandleStartTask(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
@@ -1130,8 +1204,8 @@ func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleBlockTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
@@ -1165,8 +1239,8 @@ func (h *Handlers) HandleBlockTask(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleCancelTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
@@ -1207,7 +1281,7 @@ func (h *Handlers) HandleCancelTask(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleArchiveTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	status := req.GetString("status", "")
 	boardID := req.GetString("board_id", "")
 
@@ -1227,7 +1301,7 @@ func (h *Handlers) HandleArchiveTasks(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleGetTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
@@ -1269,7 +1343,7 @@ func (h *Handlers) HandleGetTask(ctx context.Context, req mcp.CallToolRequest) (
 }
 
 func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	status := req.GetString("status", "")
 	profile := req.GetString("profile", "")
 	priority := req.GetString("priority", "")
@@ -1294,8 +1368,8 @@ func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest)
 // --- File locks ---
 
 func (h *Handlers) HandleClaimFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	filePaths := req.GetString("file_paths", "[]")
 	ttlSeconds := req.GetInt("ttl_seconds", 1800)
 
@@ -1313,8 +1387,8 @@ func (h *Handlers) HandleClaimFiles(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleReleaseFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	filePaths := req.GetString("file_paths", "[]")
 
 	if err := h.db.ReleaseFiles(project, agent, filePaths); err != nil {
@@ -1330,7 +1404,7 @@ func (h *Handlers) HandleReleaseFiles(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleListLocks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 
 	locks, err := h.db.ListFileLocks(project)
 	if err != nil {
@@ -1349,7 +1423,7 @@ func (h *Handlers) HandleListLocks(ctx context.Context, req mcp.CallToolRequest)
 // --- Agent lifecycle ---
 
 func (h *Handlers) HandleDeactivateAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	name := strings.ToLower(req.GetString("name", ""))
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
@@ -1367,8 +1441,8 @@ func (h *Handlers) HandleDeactivateAgent(ctx context.Context, req mcp.CallToolRe
 }
 
 func (h *Handlers) HandleCreateBoard(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	name := req.GetString("name", "")
 	slug := req.GetString("slug", "")
 	if name == "" || slug == "" {
@@ -1384,7 +1458,7 @@ func (h *Handlers) HandleCreateBoard(ctx context.Context, req mcp.CallToolReques
 }
 
 func (h *Handlers) HandleListBoards(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	boards, err := h.db.ListBoards(project)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list boards: %v", err)), nil
@@ -1396,7 +1470,7 @@ func (h *Handlers) HandleListBoards(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleArchiveBoard(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	boardID := req.GetString("board_id", "")
 	if boardID == "" {
 		return mcp.NewToolResultError("board_id is required"), nil
@@ -1409,7 +1483,7 @@ func (h *Handlers) HandleArchiveBoard(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleDeleteBoard(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	boardID := req.GetString("board_id", "")
 	if boardID == "" {
 		return mcp.NewToolResultError("board_id is required"), nil
@@ -1422,7 +1496,7 @@ func (h *Handlers) HandleDeleteBoard(ctx context.Context, req mcp.CallToolReques
 }
 
 func (h *Handlers) HandleDeleteAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	name := strings.ToLower(req.GetString("name", ""))
 	if name == "" {
 		return mcp.NewToolResultError("name is required"), nil
@@ -1455,8 +1529,8 @@ func (h *Handlers) HandleDeleteProject(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (h *Handlers) HandleSleepAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 
 	if err := h.db.SleepAgent(project, agent); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to sleep agent: %v", err)), nil
@@ -1472,7 +1546,7 @@ func (h *Handlers) HandleSleepAgent(ctx context.Context, req mcp.CallToolRequest
 // --- Find profiles by skill ---
 
 func (h *Handlers) HandleFindProfiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	tag := req.GetString("skill_tag", "")
 	if tag == "" {
 		return mcp.NewToolResultError("skill_tag is required"), nil
@@ -1496,8 +1570,8 @@ func (h *Handlers) HandleFindProfiles(ctx context.Context, req mcp.CallToolReque
 // --- Goals ---
 
 func (h *Handlers) HandleCreateGoal(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	goalType := req.GetString("type", "agent_goal")
 	title := req.GetString("title", "")
 	if title == "" {
@@ -1512,11 +1586,14 @@ func (h *Handlers) HandleCreateGoal(ctx context.Context, req mcp.CallToolRequest
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create goal: %v", err)), nil
 	}
 	h.events.Emit(MCPEvent{Type: "goal", Action: "create", Agent: agent, Project: project, Label: title})
-	return resultJSON(goal)
+	return resultJSON(map[string]any{
+		"goal": goal,
+		"hint": "Goals are objectives, NOT tasks. To create actionable work items, use dispatch_task() and link them via goal_id. Goals track progress by counting linked tasks.",
+	})
 }
 
 func (h *Handlers) HandleListGoals(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	goalType := req.GetString("type", "")
 	status := req.GetString("status", "")
 	ownerAgent := optionalString(req.GetString("owner_agent", ""))
@@ -1554,7 +1631,7 @@ func (h *Handlers) HandleListGoals(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleGetGoal(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	goalID := req.GetString("goal_id", "")
 	if goalID == "" {
 		return mcp.NewToolResultError("goal_id is required"), nil
@@ -1571,7 +1648,7 @@ func (h *Handlers) HandleGetGoal(ctx context.Context, req mcp.CallToolRequest) (
 }
 
 func (h *Handlers) HandleUpdateGoal(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	goalID := req.GetString("goal_id", "")
 	if goalID == "" {
 		return mcp.NewToolResultError("goal_id is required"), nil
@@ -1588,7 +1665,7 @@ func (h *Handlers) HandleUpdateGoal(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleGetGoalCascade(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 
 	cascade, err := h.db.GetGoalCascade(project)
 	if err != nil {
@@ -1699,8 +1776,8 @@ func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *s
 }
 
 func (h *Handlers) HandleGetSessionContext(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	profileSlugParam := optionalString(req.GetString("profile_slug", ""))
 
 	_ = h.db.TouchAgent(project, agent)
@@ -1723,8 +1800,8 @@ func (h *Handlers) HandleGetSessionContext(ctx context.Context, req mcp.CallTool
 // --- Soul RAG ---
 
 func (h *Handlers) HandleQueryContext(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	query := req.GetString("query", "")
 	if query == "" {
 		return mcp.NewToolResultError("query is required"), nil
@@ -1837,7 +1914,7 @@ func (h *Handlers) HandleListOrgs(ctx context.Context, req mcp.CallToolRequest) 
 }
 
 func (h *Handlers) HandleCreateTeam(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	name := req.GetString("name", "")
 	slug := req.GetString("slug", "")
 	description := req.GetString("description", "")
@@ -1864,7 +1941,7 @@ func (h *Handlers) HandleCreateTeam(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (h *Handlers) HandleListTeams(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 
 	teams, err := h.db.ListTeams(project)
 	if err != nil {
@@ -1891,7 +1968,7 @@ func (h *Handlers) HandleListTeams(ctx context.Context, req mcp.CallToolRequest)
 }
 
 func (h *Handlers) HandleAddTeamMember(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	teamSlug := req.GetString("team", "")
 	agentName := strings.ToLower(req.GetString("agent_name", ""))
 	role := req.GetString("role", "member")
@@ -1925,7 +2002,7 @@ func (h *Handlers) HandleAddTeamMember(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (h *Handlers) HandleRemoveTeamMember(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	teamSlug := req.GetString("team", "")
 	agentName := strings.ToLower(req.GetString("agent_name", ""))
 
@@ -1950,7 +2027,7 @@ func (h *Handlers) HandleRemoveTeamMember(ctx context.Context, req mcp.CallToolR
 }
 
 func (h *Handlers) HandleGetTeamInbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	teamSlug := req.GetString("team", "")
 	limit := req.GetInt("limit", 50)
 
@@ -1979,8 +2056,8 @@ func (h *Handlers) HandleGetTeamInbox(ctx context.Context, req mcp.CallToolReque
 }
 
 func (h *Handlers) HandleAddNotifyChannel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
-	agent := resolveAgent(req)
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
 	target := strings.ToLower(req.GetString("target", ""))
 
 	if target == "" {
@@ -2001,7 +2078,7 @@ func (h *Handlers) HandleAddNotifyChannel(ctx context.Context, req mcp.CallToolR
 // --- Vault ---
 
 func (h *Handlers) HandleRegisterVault(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	path := req.GetString("path", "")
 	if path == "" {
 		return mcp.NewToolResultError("path is required"), nil
@@ -2030,17 +2107,30 @@ func (h *Handlers) HandleRegisterVault(ctx context.Context, req mcp.CallToolRequ
 	// Get stats
 	count, totalSize, _ := h.db.GetVaultStats(project)
 
-	return resultJSON(map[string]any{
-		"registered": true,
-		"project":    project,
-		"path":       path,
+	// Check if any profiles exist with empty vault_paths
+	profiles, _ := h.db.ListProfiles(project)
+	var emptyVaultProfiles []string
+	for _, p := range profiles {
+		if p.VaultPaths == "" || p.VaultPaths == "[]" {
+			emptyVaultProfiles = append(emptyVaultProfiles, p.Slug)
+		}
+	}
+
+	resp := map[string]any{
+		"registered":   true,
+		"project":      project,
+		"path":         path,
 		"docs_indexed": count,
 		"total_bytes":  totalSize,
-	})
+	}
+	if len(emptyVaultProfiles) > 0 {
+		resp["hint"] = fmt.Sprintf("Profiles with empty vault_paths: %v. Consider updating them with register_profile to auto-inject vault docs at boot.", emptyVaultProfiles)
+	}
+	return resultJSON(resp)
 }
 
 func (h *Handlers) HandleSearchVault(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	query := req.GetString("query", "")
 	if query == "" {
 		return mcp.NewToolResultError("query is required"), nil
@@ -2068,7 +2158,7 @@ func (h *Handlers) HandleSearchVault(ctx context.Context, req mcp.CallToolReques
 }
 
 func (h *Handlers) HandleGetVaultDoc(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	path := req.GetString("path", "")
 	if path == "" {
 		return mcp.NewToolResultError("path is required"), nil
@@ -2086,7 +2176,7 @@ func (h *Handlers) HandleGetVaultDoc(ctx context.Context, req mcp.CallToolReques
 }
 
 func (h *Handlers) HandleListVaultDocs(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	project := resolveProject(req)
+	project := resolveProject(ctx, req)
 	limit := req.GetInt("limit", 100)
 
 	var tags []string

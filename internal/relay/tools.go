@@ -13,17 +13,17 @@ var projectParam = mcp.WithString("project", mcp.Description("Project namespace 
 func whoamiTool() mcp.Tool {
 	return mcp.NewTool(
 		"whoami",
-		mcp.WithDescription("Identify your Claude Code session. Generate a unique salt (e.g. 3 random words), pass it here. The relay greps ~/.claude/ transcripts for that salt to find your session ID. Use the returned session_id when calling register_agent."),
-		mcp.WithString("salt", mcp.Description("A unique string you just generated (e.g. 'purple-falcon-nebula'). It must appear in your conversation transcript."), mcp.Required()),
+		mcp.WithDescription("Identify your Claude Code session.\n\nHow it works: you generate a unique salt (3+ random words like 'purple-falcon-nebula'), include it in your message, then call this tool with that salt. The relay searches ~/.claude/ transcripts for the salt to find your session ID.\n\nNext step: use the returned session_id when calling register_agent."),
+		mcp.WithString("salt", mcp.Description("A unique string you just generated (e.g. 'purple-falcon-nebula'). Must be 3+ random words that appear in your conversation transcript. The relay uses this to match your session."), mcp.Required()),
 	)
 }
 
 func registerAgentTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_agent",
-		mcp.WithDescription("Register an agent with the relay. Call this once per agent at startup to announce their presence. Returns session_context with profile, tasks, unread messages, and conversations."),
+		mcp.WithDescription("Register an agent with the relay. Call this once per agent at startup to announce their presence. Returns session_context with profile, tasks, unread messages, and conversations.\n\nIf is_executive=true, an 'admin' team ('leadership') is auto-created and the agent is added to it, enabling broadcast messages (send_message to='*')."),
 		projectParam,
-		mcp.WithString("name", mcp.Description("Unique agent name (e.g. 'backend', 'frontend')"), mcp.Required()),
+		mcp.WithString("name", mcp.Description("Unique agent name (e.g. 'lead', 'backend', 'frontend'). Re-registering the same name updates the agent. To rename, register the new name and call deactivate_agent on the old one."), mcp.Required()),
 		mcp.WithString("role", mcp.Description("Agent role description (e.g. 'FastAPI backend developer')")),
 		mcp.WithString("description", mcp.Description("What this agent is currently working on")),
 		mcp.WithString("reports_to", mcp.Description("Name of the agent this one reports to (for org hierarchy)")),
@@ -38,7 +38,7 @@ func registerAgentTool() mcp.Tool {
 func sendMessageTool() mcp.Tool {
 	return mcp.NewTool(
 		"send_message",
-		mcp.WithDescription("Send a message to another agent. Use '*' as recipient for broadcast. Set conversation_id to send to a conversation (all members will see it)."),
+		mcp.WithDescription("Send a message to another agent. Use '*' as recipient for broadcast (requires admin team membership — executives get this automatically). Use 'team:<slug>' to message a team. Set conversation_id to send to a conversation."),
 		asParam,
 		projectParam,
 		mcp.WithString("to", mcp.Description("Recipient agent name, or '*' for broadcast. Ignored when conversation_id is set."), mcp.Required()),
@@ -291,9 +291,9 @@ func registerProfileTool() mcp.Tool {
 		mcp.WithString("name", mcp.Description("Display name for the profile"), mcp.Required()),
 		mcp.WithString("role", mcp.Description("Role description")),
 		mcp.WithString("context_pack", mcp.Description("Markdown blob: soul, skills, working style")),
-		mcp.WithString("soul_keys", mcp.Description("JSON array of memory keys to load at boot")),
-		mcp.WithString("skills", mcp.Description("JSON array of skill objects, e.g. [{\"id\":\"supabase-admin\",\"name\":\"Supabase Administration\",\"tags\":[\"database\",\"auth\"]}]")),
-		mcp.WithString("vault_paths", mcp.Description("JSON array of vault doc path patterns to auto-inject at boot via get_session_context. Supports globs (e.g. [\"team/souls/{slug}.md\",\"guides/supabase-*.md\"]). {slug} is resolved to the profile slug.")),
+		mcp.WithString("soul_keys", mcp.Description("Memory keys to load at boot. Accepts JSON string '[\"key1\",\"key2\"]' or native array.")),
+		mcp.WithString("skills", mcp.Description("Skill objects. Accepts JSON string or native array. Format: [{\"id\":\"...\",\"name\":\"...\",\"tags\":[...]}]")),
+		mcp.WithString("vault_paths", mcp.Description("Vault doc path patterns to auto-inject at boot. Accepts JSON string or native array. Supports globs: [\"guides/*.md\"]. {slug} is resolved to the profile slug.")),
 	)
 }
 
@@ -328,7 +328,7 @@ func findProfilesTool() mcp.Tool {
 func dispatchTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"dispatch_task",
-		mcp.WithDescription("Dispatch a task to a profile archetype. Creates a task in 'pending' state for agents running that profile to claim."),
+		mcp.WithDescription("Dispatch a task to a profile archetype. Creates a task in 'pending' state for agents running that profile to claim.\n\nUse profile='human' for tasks that require human action (API keys, approvals, purchases). A 'human' profile is auto-created on first use.\n\nIf no board_id is provided, the task is auto-assigned to the first existing board (or a 'backlog' board is auto-created)."),
 		asParam,
 		projectParam,
 		mcp.WithString("profile", mcp.Description("Profile slug to dispatch to"), mcp.Required()),
@@ -486,7 +486,7 @@ func archiveTasksTool() mcp.Tool {
 func createGoalTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_goal",
-		mcp.WithDescription("Create a goal in the cascade hierarchy. Goals flow: mission > project_goal > agent_goal > tasks. Link tasks to goals via goal_id in dispatch_task."),
+		mcp.WithDescription("Create a goal (objective) in the cascade hierarchy. Goals are NOT tasks — they don't appear in task boards. Goals flow: mission > project_goal > agent_goal. To create actionable work items, use dispatch_task() and link them to goals via goal_id. Goal progress is tracked by counting linked tasks."),
 		asParam,
 		projectParam,
 		mcp.WithString("type",
@@ -557,7 +557,7 @@ func getGoalCascadeTool() mcp.Tool {
 func registerVaultTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_vault",
-		mcp.WithDescription("Register a vault (markdown docs folder) for a project. The relay indexes all .md files and watches for changes via fsnotify. One vault per project. Re-registering replaces the previous vault path."),
+		mcp.WithDescription("Register a vault (markdown docs folder) for a project. The relay indexes all .md files and watches for changes via fsnotify. One vault per project. Re-registering replaces the previous vault path.\n\nSuggested vault location: ~/.agent-relay/projects/<project-name>/vault/\n\nAfter registering, update your profiles' vault_paths to reference the new docs so they auto-inject at agent boot."),
 		projectParam,
 		mcp.WithString("path", mcp.Description("Absolute path to the vault directory (e.g. '/Users/me/my-org-docs')"), mcp.Required()),
 	)
