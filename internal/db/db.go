@@ -26,12 +26,14 @@ func New() (*DB, error) {
 	}
 
 	dbPath := filepath.Join(dbDir, "relay.db")
-	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_cache_size=-20000&_foreign_keys=ON")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	conn.SetMaxOpenConns(1)
+	// Allow concurrent reads (WAL mode supports this), serialize writes only.
+	conn.SetMaxOpenConns(4)
+	conn.SetMaxIdleConns(2)
 
 	if err := migrate(conn); err != nil {
 		conn.Close()
@@ -48,6 +50,13 @@ func (d *DB) Close() error {
 // Path returns the database file path.
 func (d *DB) Path() string {
 	return d.path
+}
+
+// Optimize runs PRAGMA optimize and a passive WAL checkpoint.
+// Safe to call periodically (e.g. every 5 minutes).
+func (d *DB) Optimize() {
+	d.conn.Exec("PRAGMA optimize")
+	d.conn.Exec("PRAGMA wal_checkpoint(PASSIVE)")
 }
 
 // DBPath returns the default database path without opening it.

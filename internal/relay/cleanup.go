@@ -38,6 +38,7 @@ func StartCleanup(database *db.DB, done <-chan struct{}) {
 				} else if n > 0 {
 					log.Printf("marked %d stale agent(s) inactive", n)
 				}
+				database.Optimize()
 			}
 		}
 	}()
