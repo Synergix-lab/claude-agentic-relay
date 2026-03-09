@@ -150,6 +150,189 @@ func TestOptimizeNoCorruption(t *testing.T) {
 	}
 }
 
+func TestReaderPoolIsSeparate(t *testing.T) {
+	d := testDB(t)
+
+	// Reader and writer should be different pool instances
+	if d.conn == d.reader {
+		t.Fatal("reader and writer pools should be separate *sql.DB instances")
+	}
+
+	// Reader pool should allow more concurrent connections
+	writerMax := d.conn.Stats().MaxOpenConnections
+	readerMax := d.reader.Stats().MaxOpenConnections
+	if writerMax != 1 {
+		t.Errorf("writer MaxOpenConns should be 1, got %d", writerMax)
+	}
+	if readerMax < 5 {
+		t.Errorf("reader MaxOpenConns should be >= 5, got %d", readerMax)
+	}
+}
+
+func TestReadAfterWrite(t *testing.T) {
+	d := testDB(t)
+
+	// Write via writer
+	d.RegisterAgent("default", "bot-a", "tester", "", nil, nil, false, nil)
+
+	// Read via reader should see the write (WAL visibility)
+	agents, err := d.ListAgents("default")
+	if err != nil {
+		t.Fatalf("list agents: %v", err)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(agents))
+	}
+	if agents[0].Name != "bot-a" {
+		t.Errorf("expected bot-a, got %s", agents[0].Name)
+	}
+}
+
+func TestReadsNeverBlockedByWrite(t *testing.T) {
+	d := testDB(t)
+	d.RegisterAgent("default", "bot-a", "test", "", nil, nil, false, nil)
+
+	// Start a long write transaction on the writer
+	tx, err := d.conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		tx.Exec("INSERT INTO messages (id, from_agent, to_agent, type, content, created_at, project) VALUES (?, 'bot-a', 'bot-b', 'notification', 'test', datetime('now'), 'default')", fmt.Sprintf("tx-msg-%d", i))
+	}
+
+	// While the write tx is open, reads via reader pool should succeed immediately
+	var wg sync.WaitGroup
+	var readErrors atomic.Int32
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := d.ListAgents("default")
+			if err != nil {
+				readErrors.Add(1)
+				t.Logf("read error during open tx: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if readErrors.Load() > 0 {
+		t.Errorf("got %d read errors while write tx was open", readErrors.Load())
+	}
+
+	tx.Commit()
+}
+
+func TestWritesDontUseManyConns(t *testing.T) {
+	d := testDB(t)
+	d.RegisterAgent("default", "bot-a", "test", "", nil, nil, false, nil)
+
+	// Writer pool has MaxOpenConns=1. Concurrent writes should serialize, not error.
+	var wg sync.WaitGroup
+	var errors atomic.Int32
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("serial-%d", idx), "{}", nil, nil)
+			if err != nil {
+				errors.Add(1)
+				t.Logf("write error: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if errors.Load() > 0 {
+		t.Errorf("got %d write errors with single-conn writer pool", errors.Load())
+	}
+
+	msgs, _ := d.GetAllRecentMessages("default", 100)
+	if len(msgs) != 30 {
+		t.Errorf("expected 30 messages, got %d", len(msgs))
+	}
+}
+
+func TestMixedReadWriteFunction(t *testing.T) {
+	d := testDB(t)
+
+	// RegisterAgent reads (check existing) then writes (insert) — tests mixed path
+	agent1, isRespawn1, err := d.RegisterAgent("default", "bot-a", "tester", "", nil, nil, false, nil)
+	if err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+	if isRespawn1 {
+		t.Error("expected new agent, got respawn")
+	}
+	if agent1.Name != "bot-a" {
+		t.Errorf("expected bot-a, got %s", agent1.Name)
+	}
+
+	// Re-register same agent — should read existing via writer, then update
+	agent2, isRespawn2, err := d.RegisterAgent("default", "bot-a", "updated", "", nil, nil, false, nil)
+	if err != nil {
+		t.Fatalf("re-register agent: %v", err)
+	}
+	if !isRespawn2 {
+		t.Error("expected respawn, got new")
+	}
+	if agent2.Role != "updated" {
+		t.Errorf("expected role 'updated', got %s", agent2.Role)
+	}
+
+	// Dispatch + complete task — tests transitionTask mixed read/write
+	task, err := d.DispatchTask("default", "dev", "bot-a", "test task", "desc", "P2", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_, err = d.ClaimTask(task.ID, "bot-a", "default")
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	_, err = d.StartTask(task.ID, "bot-a", "default")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	result := "done!"
+	completed, err := d.CompleteTask(task.ID, "bot-a", "default", &result)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if completed.Status != "done" {
+		t.Errorf("expected done, got %s", completed.Status)
+	}
+}
+
+func TestCloseCheckpoint(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	writer, _ := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL&_foreign_keys=ON&_txlock=immediate")
+	writer.SetMaxOpenConns(1)
+	reader, _ := sql.Open("sqlite3", dbPath+"?mode=ro&_journal_mode=WAL&_busy_timeout=10000&_foreign_keys=ON")
+	reader.SetMaxOpenConns(10)
+	migrate(writer)
+
+	d := &DB{conn: writer, reader: reader, path: dbPath}
+
+	// Insert data to create WAL entries
+	d.RegisterAgent("default", "bot-a", "test", "", nil, nil, false, nil)
+	for i := 0; i < 50; i++ {
+		d.InsertMessage("default", "bot-a", "bot-b", "notification", "test", fmt.Sprintf("msg-%d", i), "{}", nil, nil)
+	}
+
+	// Close should TRUNCATE checkpoint
+	d.Close()
+
+	// Reopen and verify data intact
+	writer2, _ := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=10000&_foreign_keys=ON")
+	defer writer2.Close()
+	var count int
+	writer2.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
+	if count != 50 {
+		t.Errorf("expected 50 messages after close+reopen, got %d", count)
+	}
+}
+
 func TestHeavyLoad(t *testing.T) {
 	d := testDB(t)
 
