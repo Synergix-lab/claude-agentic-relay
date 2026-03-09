@@ -53,6 +53,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGetConversations(w, req)
 	case strings.HasPrefix(path, "/conversations/") && strings.HasSuffix(path, "/messages") && req.Method == http.MethodGet:
 		r.apiGetConversationMessages(w, path)
+	case path == "/messages" && req.Method == http.MethodGet:
+		r.apiGetAllMessages(w, req)
 	case path == "/messages/all-projects" && req.Method == http.MethodGet:
 		r.apiGetAllMessagesAllProjects(w)
 	case path == "/messages/latest-all" && req.Method == http.MethodGet:
@@ -587,6 +589,9 @@ func (r *Relay) apiPostUserResponse(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, `{"error":"failed to send response"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Create delivery record so the message appears in the agent's inbox
+	_ = r.DB.CreateDeliveries(msg.ID, body.Project, []string{body.To})
 
 	// Push notification to the target agent
 	r.Registry.Notify(body.Project, body.To, "user", "User response", msg.ID)
