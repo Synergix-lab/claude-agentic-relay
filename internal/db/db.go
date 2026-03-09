@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -388,6 +389,9 @@ func migrate(conn *sql.DB) error {
 		return fmt.Errorf("migrate vault: %w", err)
 	}
 
+	// Lowercase all agent names for case-insensitive matching
+	migrateLowercaseAgentNames(conn)
+
 	return nil
 }
 
@@ -592,4 +596,52 @@ func migrateMemories(conn *sql.DB) error {
 	END`)
 
 	return nil
+}
+
+// migrateLowercaseAgentNames normalizes all agent name fields to lowercase
+// for case-insensitive matching. Idempotent — skips rows already lowercase.
+// If duplicate agent names would result (e.g. "Bot-A" and "bot-a" in same project),
+// the migration is skipped entirely and a warning is logged.
+func migrateLowercaseAgentNames(conn *sql.DB) {
+	// Check for duplicates that would violate UNIQUE(project, name)
+	var dupes int
+	conn.QueryRow(`SELECT COUNT(*) FROM (
+		SELECT project, LOWER(name) FROM agents GROUP BY project, LOWER(name) HAVING COUNT(*) > 1
+	)`).Scan(&dupes)
+	if dupes > 0 {
+		log.Printf("warning: skipping agent name lowercase migration — %d duplicate name(s) found (differing only in case). Resolve manually.", dupes)
+		return
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		"UPDATE agents SET name = LOWER(name) WHERE name != LOWER(name)",
+		"UPDATE agents SET reports_to = LOWER(reports_to) WHERE reports_to IS NOT NULL AND reports_to != LOWER(reports_to)",
+		"UPDATE messages SET from_agent = LOWER(from_agent) WHERE from_agent != LOWER(from_agent)",
+		"UPDATE messages SET to_agent = LOWER(to_agent) WHERE to_agent != LOWER(to_agent)",
+		"UPDATE tasks SET assigned_to = LOWER(assigned_to) WHERE assigned_to IS NOT NULL AND assigned_to != LOWER(assigned_to)",
+		"UPDATE tasks SET dispatched_by = LOWER(dispatched_by) WHERE dispatched_by != LOWER(dispatched_by)",
+		"UPDATE conversations SET created_by = LOWER(created_by) WHERE created_by != LOWER(created_by)",
+		"UPDATE conversation_members SET agent_name = LOWER(agent_name) WHERE agent_name != LOWER(agent_name)",
+		"UPDATE memories SET agent_name = LOWER(agent_name) WHERE agent_name != LOWER(agent_name)",
+		"UPDATE team_members SET agent_name = LOWER(agent_name) WHERE agent_name != LOWER(agent_name)",
+		"UPDATE agent_notify_channels SET agent_name = LOWER(agent_name) WHERE agent_name != LOWER(agent_name)",
+		"UPDATE message_reads SET agent_name = LOWER(agent_name) WHERE agent_name != LOWER(agent_name)",
+		"UPDATE boards SET created_by = LOWER(created_by) WHERE created_by != LOWER(created_by)",
+		"UPDATE goals SET owner_agent = LOWER(owner_agent) WHERE owner_agent IS NOT NULL AND owner_agent != LOWER(owner_agent)",
+		"UPDATE goals SET created_by = LOWER(created_by) WHERE created_by != LOWER(created_by)",
+	}
+
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			return
+		}
+	}
+
+	tx.Commit()
 }
