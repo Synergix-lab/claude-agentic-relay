@@ -73,9 +73,9 @@ func (d *DB) DeleteProject(name string) error {
 	}
 	defer tx.Rollback()
 
-	// Delete all related data
+	// Delete all related data (tables with a project column)
 	tables := []string{
-		"notify_channels", "team_members", "teams", "orgs",
+		"agent_notify_channels", "team_members", "teams",
 		"goals", "boards", "vault_docs", "vaults",
 		"message_reads", "memories", "profiles",
 		"tasks", "conversations", "messages", "agents",
@@ -84,6 +84,12 @@ func (d *DB) DeleteProject(name string) error {
 		if _, err := tx.Exec("DELETE FROM "+t+" WHERE project = ?", name); err != nil {
 			return fmt.Errorf("delete from %s: %w", t, err)
 		}
+	}
+
+	// Delete orgs that no longer have any teams (orgs lack a project column;
+	// they are linked indirectly via teams.org_id).
+	if _, err := tx.Exec(`DELETE FROM orgs WHERE id NOT IN (SELECT DISTINCT org_id FROM teams WHERE org_id IS NOT NULL)`); err != nil {
+		return fmt.Errorf("delete orphan orgs: %w", err)
 	}
 
 	// Delete the project itself
