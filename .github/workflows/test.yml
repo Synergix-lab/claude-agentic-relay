@@ -1,0 +1,25 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install GCC (CGO required for SQLite)
+        run: sudo apt-get install -y -qq gcc
+
+      - name: Run tests
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
