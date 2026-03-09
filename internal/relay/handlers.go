@@ -1305,6 +1305,22 @@ func (h *Handlers) HandleDeleteAgent(ctx context.Context, req mcp.CallToolReques
 	})
 }
 
+func (h *Handlers) HandleDeleteProject(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := req.GetString("project", "")
+	if project == "" {
+		return mcp.NewToolResultError("project is required"), nil
+	}
+
+	if err := h.db.DeleteProject(project); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to delete project: %v", err)), nil
+	}
+
+	return resultJSON(map[string]any{
+		"deleted": true,
+		"project": project,
+	})
+}
+
 func (h *Handlers) HandleSleepAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(req)
 	agent := resolveAgent(req)

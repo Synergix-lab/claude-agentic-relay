@@ -31,6 +31,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 	switch {
 	case path == "/projects" && req.Method == http.MethodGet:
 		r.apiGetProjects(w)
+	case strings.HasPrefix(path, "/projects/") && req.Method == http.MethodDelete:
+		r.apiDeleteProject(w, strings.TrimPrefix(path, "/projects/"))
 	case strings.HasPrefix(path, "/projects/") && req.Method == http.MethodPatch:
 		r.apiPatchProject(w, req, strings.TrimPrefix(path, "/projects/"))
 	case strings.HasPrefix(path, "/projects/") && req.Method == http.MethodGet:
@@ -196,6 +198,18 @@ func (r *Relay) apiPatchProject(w http.ResponseWriter, req *http.Request, name s
 		return
 	}
 	writeJSON(w, map[string]string{"ok": "true"})
+}
+
+func (r *Relay) apiDeleteProject(w http.ResponseWriter, name string) {
+	if name == "" {
+		http.Error(w, `{"error":"missing project name"}`, http.StatusBadRequest)
+		return
+	}
+	if err := r.DB.DeleteProject(name); err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to delete project", err)
+		return
+	}
+	writeJSON(w, map[string]any{"deleted": true, "project": name})
 }
 
 func (r *Relay) apiGetSettings(w http.ResponseWriter) {
