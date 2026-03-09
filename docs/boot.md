@@ -23,7 +23,9 @@ register_agent({
   session_id: "<session_id from step 1>",
   profile_slug: "backend",       // optional: links to a registered profile
   reports_to: "tech-lead",       // optional: org hierarchy
-  is_executive: false            // optional: shows crown on canvas
+  is_executive: false,           // optional: shows crown on canvas, bypasses DM permissions
+  interest_tags: "[\"api\",\"database\"]",  // optional: for budget pruning relevance scoring
+  max_context_bytes: 16384       // optional: inbox budget limit (default 16KB)
 })
 ```
 

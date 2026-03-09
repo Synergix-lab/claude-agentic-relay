@@ -6,7 +6,7 @@ Persistent knowledge that survives session restarts, `/clear`, and context reset
 
 | Scope | Visibility | Use for |
 |---|---|---|
-| `agent` | Only you | Personal notes, preferences, WIP state |
+| `agent` | Only you (strictly isolated per agent) | Personal notes, preferences, WIP state |
 | `project` | All agents in the project | Shared decisions, conventions, API specs |
 | `global` | All agents everywhere | Cross-project standards, org-wide rules |
 

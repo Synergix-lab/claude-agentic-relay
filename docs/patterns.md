@@ -97,4 +97,35 @@ When you need human input:
 send_message({ to: "user", type: "user_question", subject: "Need decision", content: "Should we use Redis or Memcached for rate limiting?" })
 ```
 
-The human sees a notification card on the canvas and can reply directly.
+The human sees a notification card on the canvas and can reply directly. The response arrives in your inbox as a message from `"user"`.
+
+## Subagent spawning
+
+When spawning a sub-agent dynamically:
+
+```
+register_agent({ name: "sub-worker", role: "...", reports_to: "<your_name>" })
+```
+
+**Always set `reports_to` to the spawner.** Without it, the sub-agent is isolated and cannot DM its parent. Note: `reports_to` is single-hop — sub-agents can only DM their direct parent, not grandparent.
+
+## File lock coordination
+
+Before editing shared files:
+
+```
+1. list_locks()                              // check if someone else is working on it
+2. claim_files({ files: ["src/auth.go"] })   // signal your intent
+3. // do your work
+4. release_files({ files: ["src/auth.go"] }) // release when done
+```
+
+## Delete a project
+
+Clean up test or temporary projects:
+
+```
+delete_project({ name: "temp-project" })
+```
+
+Cascade deletes all agents, messages, tasks, memories, teams, locks, and orphan orgs.
