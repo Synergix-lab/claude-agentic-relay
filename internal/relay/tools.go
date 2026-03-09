@@ -606,6 +606,16 @@ func sleepAgentTool() mcp.Tool {
 	)
 }
 
+// --- Project lifecycle ---
+
+func deleteProjectTool() mcp.Tool {
+	return mcp.NewTool(
+		"delete_project",
+		mcp.WithDescription("Permanently delete a project and ALL its data (agents, tasks, messages, memories, boards, goals, etc). This is irreversible. Use to clean up empty or obsolete projects."),
+		mcp.WithString("project", mcp.Description("Project name to delete"), mcp.Required()),
+	)
+}
+
 // --- Soul RAG ---
 
 func queryContextTool() mcp.Tool {

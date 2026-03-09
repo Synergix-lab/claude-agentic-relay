@@ -3,6 +3,7 @@ package db
 import (
 	"agent-relay/internal/models"
 	"database/sql"
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -62,6 +63,40 @@ func (d *DB) GetSetting(key string) string {
 // SetSetting upserts a setting.
 func (d *DB) SetSetting(key, value string) {
 	d.conn.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, value, value)
+}
+
+// DeleteProject removes a project and all its associated data (cascade delete).
+func (d *DB) DeleteProject(name string) error {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete all related data
+	tables := []string{
+		"notify_channels", "team_members", "teams", "orgs",
+		"goals", "boards", "vault_docs", "vaults",
+		"message_reads", "memories", "profiles",
+		"tasks", "conversations", "messages", "agents",
+	}
+	for _, t := range tables {
+		if _, err := tx.Exec("DELETE FROM "+t+" WHERE project = ?", name); err != nil {
+			return fmt.Errorf("delete from %s: %w", t, err)
+		}
+	}
+
+	// Delete the project itself
+	res, err := tx.Exec("DELETE FROM projects WHERE name = ?", name)
+	if err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("project %q not found", name)
+	}
+
+	return tx.Commit()
 }
 
 // ListProjectsWithInfo returns all projects with their planet_type and stats.
