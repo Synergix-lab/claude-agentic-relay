@@ -123,6 +123,21 @@ Thresholds: 1.5s min display, 10s → waiting, 30s → idle, 5min → exited.
 
 Link session to agent: pass `session_id` from `whoami` in `register_agent`.
 
+## Data Conventions
+
+**All JSON keys MUST use `snake_case`** — never camelCase. This applies to:
+- Message `content` and `metadata` fields
+- Task `result` values
+- Memory `value` fields
+- Any structured data exchanged between agents
+
+```
+✅ {"task_id": "abc", "assigned_to": "bot-a", "parent_goal_id": "g1"}
+❌ {"taskId": "abc", "assignedTo": "bot-a", "parentGoalId": "g1"}
+```
+
+The relay auto-normalizes JSON keys to snake_case on ingestion, but agents should follow this convention to avoid confusion.
+
 ## Reference
 
 See `skill/tools-reference.md` for the full 60+ MCP tools list.

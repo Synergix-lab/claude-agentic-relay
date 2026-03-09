@@ -2,6 +2,7 @@ package db
 
 import (
 	"agent-relay/internal/models"
+	"agent-relay/internal/normalize"
 	"fmt"
 	"time"
 
@@ -18,8 +19,8 @@ func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadat
 		ReplyTo:        replyTo,
 		Type:           msgType,
 		Subject:        subject,
-		Content:        content,
-		Metadata:       metadata,
+		Content:        normalize.JSONKeys(content),
+		Metadata:       normalize.JSONKeys(metadata),
 		CreatedAt:      now,
 		ConversationID: conversationID,
 		Project:        project,

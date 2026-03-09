@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"agent-relay/internal/models"
+	"agent-relay/internal/normalize"
 
 	"github.com/google/uuid"
 )
@@ -16,6 +17,7 @@ const memoryTimeFmt = "2006-01-02T15:04:05.000000Z"
 // SetMemory creates or versions a memory. If the key already exists at the same
 // scope with a different value, a conflict is flagged instead of overwriting.
 func (d *DB) SetMemory(project, agentName, key, value, tagsJSON, scope, confidence, layer string) (*models.Memory, error) {
+	value = normalize.JSONKeys(value)
 	now := time.Now().UTC().Format(memoryTimeFmt)
 	if confidence == "" {
 		confidence = "stated"
