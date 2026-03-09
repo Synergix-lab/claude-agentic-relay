@@ -563,7 +563,8 @@ function onNewMessages(msgs) {
               fromAv.x, fromAv.y,
               targetAv.x, targetAv.y,
               msgKind,
-              () => { engine.remove(orb); targetAv.arrivalBurst(msgKind); }
+              () => { engine.remove(orb); targetAv.arrivalBurst(msgKind); },
+              msg.priority
             );
             engine.add(orb);
           }
@@ -577,7 +578,8 @@ function onNewMessages(msgs) {
           fromAv.x, fromAv.y,
           toAv.x, toAv.y,
           msgKind,
-          () => { engine.remove(orb); toAv.arrivalBurst(msgKind); }
+          () => { engine.remove(orb); toAv.arrivalBurst(msgKind); },
+          msg.priority
         );
         engine.add(orb);
       }
@@ -588,7 +590,8 @@ function onNewMessages(msgs) {
             fromAv.x, fromAv.y,
             av.x, av.y,
             msg.type || "notification",
-            () => { engine.remove(orb); av.arrivalBurst(msg.type || "notification"); }
+            () => { engine.remove(orb); av.arrivalBurst(msg.type || "notification"); },
+            msg.priority
           );
           engine.add(orb);
         }
@@ -605,7 +608,8 @@ function onNewMessages(msgs) {
                 fromAv.x, fromAv.y,
                 targetAv.x, targetAv.y,
                 msgKind,
-                () => { engine.remove(orb); targetAv.arrivalBurst(msgKind); }
+                () => { engine.remove(orb); targetAv.arrivalBurst(msgKind); },
+                msg.priority
               );
               engine.add(orb);
             }
@@ -723,13 +727,28 @@ async function loadMessages() {
 
 function appendMessage(msg, showConv = false, useTypewriter = false) {
   const el = document.createElement("div");
-  el.className = "msg-item";
+  const priority = msg.priority || "P2";
+  el.className = `msg-item priority-${priority}`;
   el.dataset.msgId = msg.id;
   if (msg.conversation_id) el.dataset.convId = msg.conversation_id;
 
   const time = formatTime(msg.created_at);
   const subject = msg.subject ? `<span class="msg-subject">${escapeHtml(msg.subject)}</span>` : "";
   const content = msg.content.length > 500 ? msg.content.slice(0, 497) + "..." : msg.content;
+
+  // Priority tag for P0/P1
+  let priorityTag = "";
+  if (priority === "P0") {
+    priorityTag = `<span class="msg-priority-tag P0">P0</span>`;
+  } else if (priority === "P1") {
+    priorityTag = `<span class="msg-priority-tag P1">P1</span>`;
+  }
+
+  // Delivery state badge
+  let deliveryBadge = "";
+  if (msg.delivery_state) {
+    deliveryBadge = `<span class="msg-delivery-badge state-${msg.delivery_state}">${msg.delivery_state}</span>`;
+  }
 
   let convTag = "";
   if (msg.conversation_id) {
@@ -758,7 +777,7 @@ function appendMessage(msg, showConv = false, useTypewriter = false) {
 
   el.innerHTML = `
     ${subject}
-    ${projectTag}${convTag}<span class="msg-from">${escapeHtml(msg.from)}</span> ${toTag}
+    ${priorityTag}${projectTag}${convTag}<span class="msg-from">${escapeHtml(msg.from)}</span> ${toTag}${deliveryBadge}
     <span class="msg-content">${useTypewriter ? "" : escapeHtml(content)}</span>
     <div class="msg-time">${time}</div>
   `;
@@ -2502,6 +2521,20 @@ async function fetchProjectsData() {
   }
 }
 
+async function fetchFileLockData() {
+  const locks = await client.fetchFileLocks();
+  // Group locks by agent+project
+  const lockMap = new Map();
+  for (const lock of locks) {
+    const key = agentKey(lock.project || "default", lock.agent_name);
+    if (!lockMap.has(key)) lockMap.set(key, []);
+    lockMap.get(key).push(lock);
+  }
+  for (const [key, av] of agentViews) {
+    av.fileLocks = lockMap.get(key) || [];
+  }
+}
+
 // Initialize view mode
 document.body.classList.add("view-galaxy");
 
@@ -2758,6 +2791,7 @@ requestAnimationFrame(() => {
   _teamsFetchTimer = setInterval(fetchTeamsData, 10000);
   setInterval(fetchProjectsData, 10000);
   setInterval(() => { if (viewMode === "colony") updateQuestTracker(); }, 15000);
+  setInterval(fetchFileLockData, 5000);
   console.log("[relay] polling started");
 });
 

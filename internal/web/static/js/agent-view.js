@@ -29,6 +29,7 @@ export class AgentView {
     this.currentTaskLabel = null;
     this.isBlocked = false;
     this._teams = [];
+    this.fileLocks = []; // active file locks for this agent
 
     this.x = 0;
     this.y = 0;
@@ -864,6 +865,30 @@ export class AgentView {
       ctx.fillStyle = this.isBlocked ? "rgba(255, 107, 107, 0.5)" : "rgba(0, 230, 118, 0.4)";
       ctx.globalAlpha = 0.8;
       ctx.fillText(taskLabel, drawX, labelY + 12);
+    }
+
+    // --- File lock icon ---
+    if (this.fileLocks.length > 0 && !dimmed) {
+      const lockX = drawX + HALF - 4;
+      const lockY = drawY - HALF + 4;
+      // Lock body
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = "#ffd700";
+      ctx.fillRect(lockX - 4, lockY, 8, 6);
+      // Lock shackle
+      ctx.strokeStyle = "#ffd700";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(lockX, lockY, 3, Math.PI, 0);
+      ctx.stroke();
+      // Count badge
+      if (this.fileLocks.length > 1) {
+        ctx.font = "bold 7px 'JetBrains Mono', monospace";
+        ctx.fillStyle = "#000";
+        ctx.textAlign = "center";
+        ctx.fillText(String(this.fileLocks.length), lockX, lockY + 5);
+      }
+      ctx.globalAlpha = 1;
     }
 
     ctx.restore();

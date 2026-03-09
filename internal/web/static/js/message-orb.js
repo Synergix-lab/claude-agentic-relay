@@ -34,13 +34,14 @@ const ORB_STYLES = {
 };
 
 export class MessageOrb {
-  constructor(fromX, fromY, toX, toY, kind = "default", onArrive) {
+  constructor(fromX, fromY, toX, toY, kind = "default", onArrive, priority) {
     this.fromX = fromX;
     this.fromY = fromY;
     this.toX = toX;
     this.toY = toY;
     this.onArrive = onArrive;
     this.kind = kind;
+    this.priority = priority || "P2";
 
     this.t = 0;
     this.done = false;
@@ -50,7 +51,7 @@ export class MessageOrb {
 
     this.trail = [];
     this._phase = 0;
-    this._flashAlpha = kind === "notification" ? 1.0 : 0; // flash on spawn for notifications
+    this._flashAlpha = kind === "notification" || this.priority === "P0" ? 1.0 : 0;
 
     const style = ORB_STYLES[kind] || ORB_STYLES.default;
     this.coreColor = style.core;
@@ -60,6 +61,16 @@ export class MessageOrb {
     this.glowR = style.glowR;
     this.speed = style.speed;
     this.trailMode = style.trailMode;
+
+    // P0 override: bigger, faster, red glow
+    if (this.priority === "P0") {
+      this.coreColor = "#ff4444";
+      this.glowColor = "#ff0000";
+      this.trailColor = [255, 68, 68];
+      this.orbSize = style.size * 1.5;
+      this.glowR = style.glowR * 1.4;
+      this.speed = style.speed * 1.5;
+    }
   }
 
   get y() { return this._curY; }

@@ -548,6 +548,17 @@ export class APIClient {
     } catch { return false; }
   }
 
+  async fetchFileLocks(project) {
+    try {
+      const qs = project ? `?project=${encodeURIComponent(project)}` : "";
+      const res = await fetch(`/api/file-locks${qs}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
   async fetchVaultStats(project) {
     try {
       const qs = project ? `?project=${encodeURIComponent(project)}` : "";

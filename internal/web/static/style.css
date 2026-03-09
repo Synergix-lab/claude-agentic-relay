@@ -347,6 +347,73 @@ main.mode-detail #vault-panel { display: none; }
   font-size: 11px;
 }
 
+/* Priority indicators */
+.msg-item.priority-P0 {
+  border-left: 3px solid #ff4444;
+  animation: msg-fade-in 0.3s ease, priority-pulse 2s ease-in-out infinite;
+}
+.msg-item.priority-P1 {
+  border-left: 3px solid #ff9800;
+}
+.msg-item.priority-P2 {
+  border-left: 3px solid transparent;
+}
+.msg-item.priority-P3 {
+  border-left: 3px solid transparent;
+  opacity: 0.6;
+}
+
+@keyframes priority-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 rgba(255, 68, 68, 0); }
+  50% { box-shadow: inset 0 0 12px rgba(255, 68, 68, 0.15); }
+}
+
+/* Delivery state badges */
+.msg-delivery-badge {
+  display: inline-block;
+  font-size: 8px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.msg-delivery-badge.state-queued {
+  color: #999;
+  background: rgba(153, 153, 153, 0.15);
+}
+.msg-delivery-badge.state-surfaced {
+  color: #74b9ff;
+  background: rgba(116, 185, 255, 0.15);
+}
+.msg-delivery-badge.state-acknowledged {
+  color: #00e676;
+  background: rgba(0, 230, 118, 0.15);
+}
+.msg-delivery-badge.state-expired {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.15);
+}
+
+/* Priority tag */
+.msg-priority-tag {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+.msg-priority-tag.P0 {
+  color: #ff4444;
+  background: rgba(255, 68, 68, 0.15);
+}
+.msg-priority-tag.P1 {
+  color: #ff9800;
+  background: rgba(255, 152, 0, 0.15);
+}
+
 @keyframes msg-fade-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
