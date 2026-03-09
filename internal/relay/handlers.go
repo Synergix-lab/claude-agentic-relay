@@ -850,6 +850,12 @@ func (h *Handlers) HandleListMemories(ctx context.Context, req mcp.CallToolReque
 	tags := req.GetStringSlice("tags", nil)
 	limit := req.GetInt("limit", 50)
 
+	// Bug fix: scope=agent must be filtered by the calling agent to prevent leaking
+	// other agents' private memories. If no explicit agent filter, use the caller's identity.
+	if scope == "agent" && agentFilter == "" {
+		agentFilter = resolveAgent(req)
+	}
+
 	memories, err := h.db.ListMemories(project, scope, agentFilter, tags, limit)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list memories: %v", err)), nil
