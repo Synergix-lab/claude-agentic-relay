@@ -621,13 +621,15 @@ Then call `get_inbox({ apply_budget: true })`. The relay scores every message an
 
 **Step 2 — Score remaining messages.** Each non-P0 message gets a utility score:
 
-$$\text{Utility} = 0.7 \times \text{priorityScore} + 0.2 \times \text{tagScore} + 0.1 \times \text{freshnessScore}$$
+```
+utility = 0.7 * priorityScore + 0.2 * tagScore + 0.1 * freshnessScore
+```
 
 | Component | Formula | Range |
 |---|---|---|
-| **priorityScore** | $1 - \frac{\text{priorityIndex}}{3}$ &rarr; P1=0.67, P2=0.33, P3=0 | 0&ndash;1 |
-| **tagScore** | Jaccard similarity: $\frac{\|A \cap B\|}{\|A \cup B\|}$ between message tags and agent `interest_tags` | 0&ndash;1 |
-| **freshnessScore** | Exponential decay: $\frac{1}{1 + \frac{\text{age\_seconds}}{3600}}$ &mdash; 1h-old = 0.5, 2h-old = 0.33 | 0&ndash;1 |
+| **priorityScore** | `1 - priorityIndex / 3` — P1=0.67, P2=0.33, P3=0 | 0–1 |
+| **tagScore** | Jaccard similarity between message `metadata.tags` and agent `interest_tags`: `len(A & B) / len(A \| B)` | 0–1 |
+| **freshnessScore** | Exponential decay: `1 / (1 + ageSeconds / 3600)` — 1h-old = 0.5, 2h-old = 0.33 | 0–1 |
 
 **Step 3 — Greedy selection.** Messages are sorted by utility descending. Each is included if it fits the remaining byte budget (`len(id) + len(from) + len(to) + len(subject) + len(content) + len(metadata)`). Messages that don't fit are skipped.
 
