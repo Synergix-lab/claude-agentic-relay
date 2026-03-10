@@ -69,6 +69,10 @@ func getInboxTool() mcp.Tool {
 		mcp.WithNumber("limit", mcp.Description("Max number of messages to return (default: 10).")),
 		mcp.WithBoolean("full_content", mcp.Description("Return full message content instead of truncating to 300 chars (default: false)")),
 		mcp.WithBoolean("apply_budget", mcp.Description("Apply context budget pruning: filters messages by priority, tag relevance, and freshness to fit within agent's max_context_bytes (default: false)")),
+		mcp.WithString("min_priority", mcp.Description("Minimum priority filter (e.g. 'P1' returns P0+P1 only). Priority is sorted lexically: P0 < P1 < P2 < P3."), mcp.Enum("P0", "P1", "P2", "P3")),
+		mcp.WithString("from", mcp.Description("Filter by sender agent name")),
+		mcp.WithString("since", mcp.Description("Only return messages created after this ISO timestamp (e.g. '2026-03-10T12:00:00Z')")),
+		mcp.WithBoolean("exclude_broadcasts", mcp.Description("Exclude broadcast messages from results (default: false)")),
 	)
 }
 
@@ -184,7 +188,7 @@ func archiveConversationTool() mcp.Tool {
 func setMemoryTool() mcp.Tool {
 	return mcp.NewTool(
 		"set_memory",
-		mcp.WithDescription("Store a piece of knowledge in persistent memory. If the key exists with a different value at the same scope, a conflict is flagged (both versions preserved). Use resolve_conflict to pick the truth."),
+		mcp.WithDescription("Store a piece of knowledge in persistent memory. By default uses upsert mode: silently overwrites existing values (archives old version). Set upsert=false to enable conflict detection (both versions preserved, use resolve_conflict to pick the truth)."),
 		asParam,
 		projectParam,
 		mcp.WithString("key", mcp.Description("Memory key (e.g. 'auth-header-format', 'db-schema-version')"), mcp.Required()),
@@ -202,6 +206,7 @@ func setMemoryTool() mcp.Tool {
 			mcp.Description("Memory layer: 'constraints' (hard rules, never override), 'behavior' (defaults, can adapt), 'context' (ephemeral, session-specific)"),
 			mcp.Enum("constraints", "behavior", "context"),
 		),
+		mcp.WithBoolean("upsert", mcp.Description("When true (default), silently overwrites existing values. When false, flags a conflict if value differs.")),
 	)
 }
 
@@ -467,6 +472,21 @@ func deleteBoardTool() mcp.Tool {
 		asParam,
 		projectParam,
 		mcp.WithString("board_id", mcp.Description("Board ID to delete (must be archived first)"), mcp.Required()),
+	)
+}
+
+func updateTaskTool() mcp.Tool {
+	return mcp.NewTool(
+		"update_task",
+		mcp.WithDescription("Update fields on an existing task without changing its status. Preserves assignee, claim, and progress history."),
+		asParam,
+		projectParam,
+		mcp.WithString("task_id", mcp.Description("Task ID to update"), mcp.Required()),
+		mcp.WithString("title", mcp.Description("New title")),
+		mcp.WithString("description", mcp.Description("New description")),
+		mcp.WithString("priority", mcp.Description("New priority"), mcp.Enum("P0", "P1", "P2", "P3")),
+		mcp.WithString("board_id", mcp.Description("Move to a different board")),
+		mcp.WithString("goal_id", mcp.Description("Link to a different goal")),
 	)
 }
 

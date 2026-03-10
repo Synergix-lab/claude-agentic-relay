@@ -462,6 +462,18 @@ func migrate(conn *sql.DB) error {
 		return fmt.Errorf("migrate vault: %w", err)
 	}
 
+	// Token usage tracking
+	conn.Exec(`CREATE TABLE IF NOT EXISTS token_usage (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		project    TEXT NOT NULL DEFAULT 'default',
+		agent      TEXT NOT NULL DEFAULT '',
+		tool       TEXT NOT NULL DEFAULT '',
+		bytes      INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL
+	)`)
+	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_project_time ON token_usage(project, created_at)`)
+	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_agent_time ON token_usage(project, agent, created_at)`)
+
 	// Lowercase all agent names for case-insensitive matching
 	migrateLowercaseAgentNames(conn)
 

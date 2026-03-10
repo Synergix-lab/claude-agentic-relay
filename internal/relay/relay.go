@@ -31,8 +31,8 @@ type Relay struct {
 // New creates a fully wired Relay with all tools registered.
 func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher, cfg config.Config) *Relay {
 	mcpSrv := server.NewMCPServer(
-		"agent-relay",
-		"1.0.0",
+		"wrai.th",
+		"0.5.0",
 		server.WithToolCapabilities(false),
 		server.WithLogging(),
 		server.WithRecovery(),
@@ -79,6 +79,7 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		server.ServerTool{Tool: cancelTaskTool(), Handler: handlers.HandleCancelTask},
 		server.ServerTool{Tool: getTaskTool(), Handler: handlers.HandleGetTask},
 		server.ServerTool{Tool: listTasksTool(), Handler: handlers.HandleListTasks},
+		server.ServerTool{Tool: updateTaskTool(), Handler: handlers.HandleUpdateTask},
 		server.ServerTool{Tool: archiveTasksTool(), Handler: handlers.HandleArchiveTasks},
 		// Boards
 		server.ServerTool{Tool: createBoardTool(), Handler: handlers.HandleCreateBoard},

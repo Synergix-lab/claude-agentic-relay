@@ -913,9 +913,9 @@ func TestMemoryConflictAndResolve(t *testing.T) {
 		"project": "p1", "as": "bot-a", "key": "db_host", "value": "localhost",
 	}))
 
-	// Agent B sets the same key with different value → conflict
+	// Agent B sets the same key with different value → conflict (upsert=false)
 	setRes, _ := h.HandleSetMemory(ctx, call(map[string]any{
-		"project": "p1", "as": "bot-b", "key": "db_host", "value": "prod-db.internal",
+		"project": "p1", "as": "bot-b", "key": "db_host", "value": "prod-db.internal", "upsert": false,
 	}))
 	setData := parseJSON(t, setRes)
 	if setData["conflict"] != true {

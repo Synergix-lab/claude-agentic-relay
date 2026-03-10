@@ -15,4 +15,5 @@ type ProjectInfo struct {
 	TotalTasks  int    `json:"total_tasks"`
 	ActiveTasks int    `json:"active_tasks"`
 	DoneTasks   int    `json:"done_tasks"`
+	Tokens24h   int64  `json:"tokens_24h"`
 }
