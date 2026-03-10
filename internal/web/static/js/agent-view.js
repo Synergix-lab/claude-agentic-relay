@@ -81,8 +81,8 @@ export class AgentView {
     // Colony mode (project focused view)
     this.colony = false;
     this._roboAnim = "idle";
-    this._roboFrame = 0;
-    this._roboTimer = 0;
+    this._roboFrame = nameHash(name) % 13; // offset so same-color mechs don't sync
+    this._roboTimer = (nameHash(name) % 100) / 100 * 0.12; // stagger timer
     this._roboFlip = nameHash(name) % 2 === 0; // random face direction
     this._mechColor = mechSprite.colorForAgent(name);
   }
@@ -431,19 +431,17 @@ export class AgentView {
       ctx.fillStyle = this.isGolden ? "#ffd700" : (this.hovered ? "#fff" : "rgba(220,220,230,0.85)");
       ctx.fillText(displayName, dx, labelY);
 
-      // Team dots
+      // Single team dot (highest priority: admin > bot > regular)
       const TEAM_DOT_COLORS = { admin: "#ffd700", regular: "#00FFFF", bot: "#00FF88" };
+      const TEAM_PRIORITY = { admin: 3, bot: 2, regular: 1 };
       if (this._teams && this._teams.length > 0 && !dimmed) {
+        const best = this._teams.reduce((a, b) => (TEAM_PRIORITY[b.type] || 0) > (TEAM_PRIORITY[a.type] || 0) ? b : a);
         const nameW = ctx.measureText(displayName).width;
-        let dotStartX = dx + nameW / 2 + 5;
-        for (let i = 0; i < Math.min(this._teams.length, 3); i++) {
-          const dotColor = TEAM_DOT_COLORS[this._teams[i].type] || TEAM_DOT_COLORS.regular;
-          ctx.fillStyle = dotColor;
-          ctx.globalAlpha = 0.7;
-          ctx.beginPath();
-          ctx.arc(dotStartX + i * 7, labelY - 4, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
+        ctx.fillStyle = TEAM_DOT_COLORS[best.type] || TEAM_DOT_COLORS.regular;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath();
+        ctx.arc(dx + nameW / 2 + 6, labelY - 4, 2, 0, Math.PI * 2);
+        ctx.fill();
         ctx.globalAlpha = alpha;
       }
 
@@ -786,19 +784,17 @@ export class AgentView {
     const displayName = this.isGolden ? `★ ${this.name}` : this.name;
     ctx.fillText(displayName, drawX, labelY);
 
-    // Team dots (small colored circles next to name)
+    // Single team dot (highest priority: admin > bot > regular)
     const TEAM_DOT_COLORS = { admin: "#ffd700", regular: "#00FFFF", bot: "#00FF88" };
+    const TEAM_PRIORITY = { admin: 3, bot: 2, regular: 1 };
     if (this._teams && this._teams.length > 0 && !dimmed) {
+      const best = this._teams.reduce((a, b) => (TEAM_PRIORITY[b.type] || 0) > (TEAM_PRIORITY[a.type] || 0) ? b : a);
       const nameW = ctx.measureText(displayName).width;
-      let dotStartX = drawX + nameW / 2 + 6;
-      for (let i = 0; i < Math.min(this._teams.length, 3); i++) {
-        const dotColor = TEAM_DOT_COLORS[this._teams[i].type] || TEAM_DOT_COLORS.regular;
-        ctx.fillStyle = dotColor;
-        ctx.globalAlpha = 0.7;
-        ctx.beginPath();
-        ctx.arc(dotStartX + i * 7, labelY - 4, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.fillStyle = TEAM_DOT_COLORS[best.type] || TEAM_DOT_COLORS.regular;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.arc(drawX + nameW / 2 + 6, labelY - 4, 2, 0, Math.PI * 2);
+      ctx.fill();
       ctx.globalAlpha = dimmed ? 0.3 : 1;
     }
 
