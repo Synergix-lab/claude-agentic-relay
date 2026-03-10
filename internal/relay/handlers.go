@@ -1950,98 +1950,291 @@ func (h *Handlers) HandleGetGoalCascade(ctx context.Context, req mcp.CallToolReq
 
 // --- Session context ---
 
+// compactTask returns a pruned task for session context (strips timestamps, project, profile_slug).
+func compactTask(t models.Task) map[string]any {
+	ct := map[string]any{
+		"id":     t.ID,
+		"title":  t.Title,
+		"status": t.Status,
+	}
+	if t.Priority != "" && t.Priority != "normal" {
+		ct["priority"] = t.Priority
+	}
+	if t.AssignedTo != nil {
+		ct["assigned_to"] = *t.AssignedTo
+	}
+	if t.DispatchedBy != "" {
+		ct["dispatched_by"] = t.DispatchedBy
+	}
+	if t.Description != "" {
+		d := t.Description
+		if len(d) > 300 {
+			d = d[:300] + "…"
+		}
+		ct["description"] = d
+	}
+	if t.Result != nil {
+		r := *t.Result
+		if len(r) > 300 {
+			r = r[:300] + "…"
+		}
+		ct["result"] = r
+	}
+	if t.BlockedReason != nil {
+		ct["blocked_reason"] = *t.BlockedReason
+	}
+	if t.GoalID != nil {
+		ct["goal_id"] = *t.GoalID
+	}
+	if t.ParentTaskID != nil {
+		ct["parent_task_id"] = *t.ParentTaskID
+	}
+	if len(t.Subtasks) > 0 {
+		subs := make([]map[string]any, len(t.Subtasks))
+		for i, s := range t.Subtasks {
+			subs[i] = compactTask(s)
+		}
+		ct["subtasks"] = subs
+	}
+	return ct
+}
+
+// compactMessage returns a pruned message for session context (truncates content, strips metadata).
+func compactMessage(m models.Message) map[string]any {
+	cm := map[string]any{
+		"id":   m.ID,
+		"from": m.From,
+	}
+	if m.Subject != "" {
+		cm["subject"] = m.Subject
+	}
+	content := m.Content
+	if len(content) > 500 {
+		content = content[:500] + "…"
+	}
+	cm["content"] = content
+	if m.ConversationID != nil {
+		cm["conversation_id"] = *m.ConversationID
+	}
+	if m.TaskID != nil {
+		cm["task_id"] = *m.TaskID
+	}
+	if m.Priority != "" && m.Priority != "normal" {
+		cm["priority"] = m.Priority
+	}
+	cm["created_at"] = m.CreatedAt
+	return cm
+}
+
+// compactMemory returns a pruned memory for session context (truncates value, strips timestamps).
+func compactMemory(m models.Memory) map[string]any {
+	cm := map[string]any{
+		"key": m.Key,
+	}
+	v := m.Value
+	if len(v) > 300 {
+		v = v[:300] + "…"
+	}
+	cm["value"] = v
+	if m.Tags != "" && m.Tags != "[]" {
+		cm["tags"] = m.Tags
+	}
+	if m.Scope != "agent" {
+		cm["scope"] = m.Scope
+	}
+	return cm
+}
+
+// compactConversation returns a pruned conversation summary.
+func compactConversation(c models.ConversationSummary) map[string]any {
+	cc := map[string]any{
+		"id":    c.ID,
+		"title": c.Title,
+	}
+	if c.UnreadCount > 0 {
+		cc["unread"] = c.UnreadCount
+	}
+	if c.MemberCount > 2 {
+		cc["members"] = c.MemberCount
+	}
+	return cc
+}
+
+// compactProfile returns a pruned profile for session context (strips id, project, timestamps, vault_paths).
+func compactProfile(p models.Profile) map[string]any {
+	cp := map[string]any{
+		"slug": p.Slug,
+		"name": p.Name,
+		"role": p.Role,
+	}
+	if p.ContextPack != "" {
+		cp["context_pack"] = p.ContextPack
+	}
+	if p.SoulKeys != "" && p.SoulKeys != "[]" {
+		cp["soul_keys"] = json.RawMessage(p.SoulKeys)
+	}
+	if p.Skills != "" && p.Skills != "[]" {
+		cp["skills"] = json.RawMessage(p.Skills)
+	}
+	return cp
+}
+
+// compactGoal returns a pruned goal for session context.
+func compactGoal(g models.Goal) map[string]any {
+	cg := map[string]any{
+		"id":    g.ID,
+		"title": g.Title,
+		"type":  g.Type,
+	}
+	if g.Description != "" {
+		d := g.Description
+		if len(d) > 200 {
+			d = d[:200] + "…"
+		}
+		cg["description"] = d
+	}
+	return cg
+}
+
 func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *string) map[string]any {
 	result := map[string]any{}
 
-	// Profile
+	// Profile (compact, single fetch — reused for vault_paths below)
+	var profile *models.Profile
 	if profileSlug != nil && *profileSlug != "" {
-		profile, err := h.db.GetProfile(project, *profileSlug)
-		if err == nil && profile != nil {
-			result["profile"] = profile
+		p, err := h.db.GetProfile(project, *profileSlug)
+		if err == nil && p != nil {
+			profile = p
+			result["profile"] = compactProfile(*p)
 		}
 	}
 
-	// Tasks
+	// Tasks (compact)
 	assignedToMe, dispatchedByMe, _ := h.db.GetAgentTasks(project, agentName)
-	if assignedToMe == nil {
-		assignedToMe = []models.Task{}
-	}
-	if dispatchedByMe == nil {
-		dispatchedByMe = []models.Task{}
-	}
-	// Build goal context for assigned tasks that have goal_id
+	var compactAssigned, compactDispatched []map[string]any
 	goalContext := map[string]any{}
 	for _, t := range assignedToMe {
+		compactAssigned = append(compactAssigned, compactTask(t))
 		if t.GoalID != nil && *t.GoalID != "" {
 			if _, seen := goalContext[*t.GoalID]; !seen {
 				ancestry, _ := h.db.GetGoalAncestry(*t.GoalID, project)
 				goal, _ := h.db.GetGoal(*t.GoalID, project)
 				if goal != nil {
-					if ancestry == nil {
-						ancestry = []models.Goal{}
+					var chain []map[string]any
+					for _, a := range ancestry {
+						chain = append(chain, compactGoal(a))
 					}
-					goalContext[*t.GoalID] = append(ancestry, *goal)
+					chain = append(chain, compactGoal(*goal))
+					goalContext[*t.GoalID] = chain
 				}
 			}
 		}
 	}
+	for _, t := range dispatchedByMe {
+		compactDispatched = append(compactDispatched, compactTask(t))
+	}
 
-	result["pending_tasks"] = map[string]any{
-		"assigned_to_me":  assignedToMe,
-		"dispatched_by_me": dispatchedByMe,
+	tasks := map[string]any{}
+	if len(compactAssigned) > 0 {
+		tasks["assigned_to_me"] = compactAssigned
+	}
+	if len(compactDispatched) > 0 {
+		tasks["dispatched_by_me"] = compactDispatched
+	}
+	if len(tasks) > 0 {
+		result["pending_tasks"] = tasks
 	}
 	if len(goalContext) > 0 {
 		result["goal_context"] = goalContext
 	}
 
-	// Unread messages (full content, not truncated)
+	// Unread messages (index-only: metadata without content, budget-pruned)
 	unread, err := h.db.GetInbox(project, agentName, true, 50)
 	if err != nil || unread == nil {
 		unread = []models.Message{}
 	}
-	result["unread_messages"] = unread
+	if len(unread) > 0 {
+		agentObj, _ := h.db.GetAgent(project, agentName)
+		if agentObj != nil {
+			var tags []string
+			json.Unmarshal([]byte(agentObj.InterestTags), &tags)
+			unread = applyBudget(unread, tags, agentObj.MaxContextBytes)
+		}
+		indexUnread := make([]map[string]any, len(unread))
+		for i, m := range unread {
+			idx := map[string]any{
+				"id":   m.ID,
+				"from": m.From,
+			}
+			if m.Subject != "" {
+				idx["subject"] = m.Subject
+			}
+			if m.Priority != "" && m.Priority != "P2" {
+				idx["priority"] = m.Priority
+			}
+			if m.ConversationID != nil {
+				idx["conversation_id"] = *m.ConversationID
+			}
+			if m.TaskID != nil {
+				idx["task_id"] = *m.TaskID
+			}
+			indexUnread[i] = idx
+		}
+		result["unread_messages"] = indexUnread
+		result["unread_hint"] = "Use get_inbox for full content"
+	}
 
-	// Active conversations
+	// Active conversations (compact)
 	convs, err := h.db.ListConversations(project, agentName)
-	if err != nil || convs == nil {
-		convs = []models.ConversationSummary{}
+	if err == nil && len(convs) > 0 {
+		compactConvs := make([]map[string]any, len(convs))
+		for i, c := range convs {
+			compactConvs[i] = compactConversation(c)
+		}
+		result["active_conversations"] = compactConvs
 	}
-	result["active_conversations"] = convs
 
-	// Relevant memories (agent-scope + project-scope)
+	// Relevant memories (index-only: key + tags, use get_memory for values)
 	memories, err := h.db.ListMemories(project, "", agentName, nil, 20)
-	if err != nil || memories == nil {
-		memories = []models.Memory{}
+	if err == nil && len(memories) > 0 {
+		indexMems := make([]map[string]any, len(memories))
+		for i, m := range memories {
+			idx := map[string]any{"key": m.Key}
+			if m.Tags != "" && m.Tags != "[]" {
+				idx["tags"] = m.Tags
+			}
+			if m.Scope != "agent" {
+				idx["scope"] = m.Scope
+			}
+			indexMems[i] = idx
+		}
+		result["relevant_memories"] = indexMems
 	}
-	result["relevant_memories"] = memories
 
 	// Vault context: auto-inject docs based on profile vault_paths
-	if profileSlug != nil && *profileSlug != "" {
-		profile, _ := h.db.GetProfile(project, *profileSlug)
-		if profile != nil && profile.VaultPaths != "" && profile.VaultPaths != "[]" {
-			var paths []string
-			if err := json.Unmarshal([]byte(profile.VaultPaths), &paths); err == nil && len(paths) > 0 {
-				// Resolve {slug} template
-				resolved := make([]string, len(paths))
-				for i, p := range paths {
-					resolved[i] = strings.ReplaceAll(p, "{slug}", *profileSlug)
-				}
+	if profile != nil && profile.VaultPaths != "" && profile.VaultPaths != "[]" {
+		var paths []string
+		if err := json.Unmarshal([]byte(profile.VaultPaths), &paths); err == nil && len(paths) > 0 {
+			// Resolve {slug} template
+			resolved := make([]string, len(paths))
+			for i, p := range paths {
+				resolved[i] = strings.ReplaceAll(p, "{slug}", *profileSlug)
+			}
 
-				// Max ~4000 bytes (conservative estimate for ~4000 tokens)
-				maxBytes := 16000 // ~4000 tokens at ~4 bytes/token
-				docs, _ := h.db.GetVaultDocsByPaths(project, resolved, maxBytes)
-				if len(docs) > 0 {
-					type vaultCtx struct {
-						Path    string `json:"path"`
-						Title   string `json:"title"`
-						Content string `json:"content"`
-					}
-					vaultDocs := make([]vaultCtx, len(docs))
-					for i, d := range docs {
-						vaultDocs[i] = vaultCtx{Path: d.Path, Title: d.Title, Content: d.Content}
-					}
-					result["vault_context"] = vaultDocs
+			// Max ~4000 tokens at ~4 bytes/token
+			maxBytes := 16000
+			docs, _ := h.db.GetVaultDocsByPaths(project, resolved, maxBytes)
+			if len(docs) > 0 {
+				type vaultCtx struct {
+					Path    string `json:"path"`
+					Title   string `json:"title"`
+					Content string `json:"content"`
 				}
+				vaultDocs := make([]vaultCtx, len(docs))
+				for i, d := range docs {
+					vaultDocs[i] = vaultCtx{Path: d.Path, Title: d.Title, Content: d.Content}
+				}
+				result["vault_context"] = vaultDocs
 			}
 		}
 	}
@@ -2065,8 +2258,6 @@ func (h *Handlers) HandleGetSessionContext(ctx context.Context, req mcp.CallTool
 	}
 
 	sessionCtx := h.buildSessionContext(project, agent, profileSlugParam)
-	sessionCtx["agent"] = agent
-	sessionCtx["project"] = project
 
 	return resultJSON(sessionCtx)
 }
