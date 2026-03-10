@@ -411,7 +411,7 @@ func (d *DB) ListAllTasks(limit int) ([]models.Task, error) {
 	return tasks, rows.Err()
 }
 
-func (d *DB) UpdateTaskFields(taskID, project string, title, description, priority *string) (*models.Task, error) {
+func (d *DB) UpdateTaskFields(taskID, project string, title, description, priority, boardID, goalID *string) (*models.Task, error) {
 	task, err := d.GetTask(taskID, project)
 	if err != nil {
 		return nil, err
@@ -429,10 +429,16 @@ func (d *DB) UpdateTaskFields(taskID, project string, title, description, priori
 	if priority != nil {
 		task.Priority = *priority
 	}
+	if boardID != nil {
+		task.BoardID = boardID
+	}
+	if goalID != nil {
+		task.GoalID = goalID
+	}
 
 	_, err = d.conn.Exec(
-		"UPDATE tasks SET title = ?, description = ?, priority = ? WHERE id = ? AND project = ?",
-		task.Title, task.Description, task.Priority, taskID, project,
+		"UPDATE tasks SET title = ?, description = ?, priority = ?, board_id = ?, goal_id = ? WHERE id = ? AND project = ?",
+		task.Title, task.Description, task.Priority, task.BoardID, task.GoalID, taskID, project,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update task: %w", err)
@@ -534,6 +540,35 @@ func (d *DB) ArchiveTasks(project, status, boardID string) (int64, error) {
 		return 0, fmt.Errorf("archive tasks: %w", err)
 	}
 	return result.RowsAffected()
+}
+
+// ResolveTaskID resolves a short task ID prefix to a full UUID.
+// Returns the full ID if exactly one match is found, or the original if it's already a full UUID.
+func (d *DB) ResolveTaskID(prefix, project string) (string, error) {
+	// If it looks like a full UUID (36 chars), skip prefix search
+	if len(prefix) >= 36 {
+		return prefix, nil
+	}
+	var ids []string
+	rows, err := d.ro().Query("SELECT id FROM tasks WHERE id LIKE ? AND project = ?", prefix+"%", project)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return prefix, nil // let downstream report "not found"
+	}
+	if len(ids) > 1 {
+		return "", fmt.Errorf("ambiguous task ID prefix %q (%d matches)", prefix, len(ids))
+	}
+	return ids[0], nil
 }
 
 func normalizePtr(s *string) *string {

@@ -44,42 +44,74 @@ func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadat
 	return msg, nil
 }
 
-func (d *DB) GetInbox(project, agentName string, unreadOnly bool, limit int) ([]models.Message, error) {
+// InboxFilter holds optional filtering parameters for get_inbox.
+type InboxFilter struct {
+	MinPriority       string // e.g. "P1" — only messages with priority <= this
+	From              string // filter by sender
+	Since             string // ISO timestamp — only messages after this time
+	ExcludeBroadcasts bool   // exclude broadcast messages (to_agent = '*')
+}
+
+func (d *DB) GetInbox(project, agentName string, unreadOnly bool, limit int, filters ...InboxFilter) ([]models.Message, error) {
+	var f InboxFilter
+	if len(filters) > 0 {
+		f = filters[0]
+	}
 	// Use delivery-based inbox when deliveries exist
 	if d.HasDeliveries() {
-		return d.GetInboxViaDeliveries(project, agentName, unreadOnly, limit)
+		return d.GetInboxViaDeliveries(project, agentName, unreadOnly, limit, f)
 	}
-	return d.getInboxLegacy(project, agentName, unreadOnly, limit)
+	return d.getInboxLegacy(project, agentName, unreadOnly, limit, f)
 }
 
 // getInboxLegacy is the original inbox query for DBs without deliveries.
-func (d *DB) getInboxLegacy(project, agentName string, unreadOnly bool, limit int) ([]models.Message, error) {
+func (d *DB) getInboxLegacy(project, agentName string, unreadOnly bool, limit int, f InboxFilter) ([]models.Message, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	query := `
+	broadcastClause := "(m.to_agent = '*' AND m.from_agent != ?)"
+	if f.ExcludeBroadcasts {
+		broadcastClause = "0" // never match broadcasts
+	}
+
+	query := fmt.Sprintf(`
 		SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata, m.created_at, m.read_at, m.conversation_id, m.project, m.task_id, m.priority, m.ttl_seconds, m.expired_at
 		FROM messages m
 		WHERE m.project = ?
 			AND (
-				-- Legacy 1-1 and broadcast
-				(m.conversation_id IS NULL AND (m.to_agent = ? OR (m.to_agent = '*' AND m.from_agent != ?)))
-				-- Conversations where I'm a member
+				(m.conversation_id IS NULL AND (m.to_agent = ? OR %s))
 				OR (m.conversation_id IS NOT NULL AND m.conversation_id IN (
 					SELECT conversation_id FROM conversation_members
 					WHERE agent_name = ? AND left_at IS NULL
 				) AND m.from_agent != ?)
 			)
 			AND m.expired_at IS NULL
-	`
-	args := []any{project, agentName, agentName, agentName, agentName}
+	`, broadcastClause)
+	args := []any{project, agentName}
+	if !f.ExcludeBroadcasts {
+		args = append(args, agentName)
+	}
+	args = append(args, agentName, agentName)
 
 	if unreadOnly {
 		query += ` AND NOT EXISTS (
 			SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.agent_name = ?
 		)`
 		args = append(args, agentName)
+	}
+
+	if f.MinPriority != "" {
+		query += " AND m.priority <= ?"
+		args = append(args, f.MinPriority)
+	}
+	if f.From != "" {
+		query += " AND m.from_agent = ?"
+		args = append(args, f.From)
+	}
+	if f.Since != "" {
+		query += " AND m.created_at >= ?"
+		args = append(args, f.Since)
 	}
 
 	query += " ORDER BY m.priority ASC, m.created_at DESC LIMIT ?"
