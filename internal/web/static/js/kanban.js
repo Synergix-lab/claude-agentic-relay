@@ -391,12 +391,17 @@ const KANBAN_STYLES = `
   background: rgba(15,15,26,0.98);
   border: 1px solid rgba(108,92,231,0.3);
   border-radius: 4px;
-  padding: 20px;
-  width: 360px;
+  padding: 24px;
+  width: 560px;
   max-width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
   animation: formIn 0.2s ease-out;
   box-shadow: 0 0 30px rgba(108,92,231,0.15);
 }
+.kb-form::-webkit-scrollbar { width: 4px; }
+.kb-form::-webkit-scrollbar-track { background: transparent; }
+.kb-form::-webkit-scrollbar-thumb { background: rgba(108,92,231,0.3); border-radius: 2px; }
 .kb-form h3 {
   margin: 0 0 16px;
   font-size: 13px;
@@ -439,7 +444,106 @@ const KANBAN_STYLES = `
 }
 .kb-field textarea {
   resize: vertical;
-  min-height: 60px;
+  min-height: 200px;
+}
+
+/* ── Checklist ── */
+.kb-checklist {
+  margin-top: 4px;
+}
+.kb-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 2px;
+  transition: background 0.1s;
+}
+.kb-checklist-item:hover {
+  background: rgba(108,92,231,0.08);
+}
+.kb-checklist-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #6c5ce7;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.kb-checklist-item input[type="text"] {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #dfe6e9;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+}
+.kb-checklist-item input[type="text"]:focus {
+  border-bottom: 1px solid rgba(108,92,231,0.4);
+}
+.kb-checklist-item.kb-checked input[type="text"] {
+  text-decoration: line-through;
+  color: #636e72;
+}
+.kb-checklist-remove {
+  background: none;
+  border: none;
+  color: #636e72;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.kb-checklist-item:hover .kb-checklist-remove {
+  opacity: 1;
+}
+.kb-checklist-remove:hover {
+  color: #ff6b6b;
+}
+.kb-checklist-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: none;
+  border: 1px dashed rgba(108,92,231,0.2);
+  border-radius: 2px;
+  color: #636e72;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: 100%;
+}
+.kb-checklist-add:hover {
+  border-color: rgba(108,92,231,0.5);
+  color: #a29bfe;
+  background: rgba(108,92,231,0.05);
+}
+.kb-checklist-progress {
+  font-size: 9px;
+  color: #636e72;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kb-checklist-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(108,92,231,0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.kb-checklist-bar-fill {
+  height: 100%;
+  background: #6c5ce7;
+  border-radius: 2px;
+  transition: width 0.2s;
 }
 .kb-form-btns {
   display: flex;
@@ -1141,6 +1245,95 @@ export class KanbanBoard {
     }
   }
 
+  /* ─── Checklist helpers ─── */
+
+  _parseChecklist(description) {
+    if (!description) return { text: '', items: [] };
+    const lines = description.split('\n');
+    const textLines = [];
+    const items = [];
+    for (const line of lines) {
+      const match = line.match(/^- \[([ xX])\] (.*)$/);
+      if (match) {
+        items.push({ checked: match[1] !== ' ', text: match[2] });
+      } else {
+        textLines.push(line);
+      }
+    }
+    while (textLines.length && textLines[textLines.length - 1].trim() === '') textLines.pop();
+    return { text: textLines.join('\n'), items };
+  }
+
+  _buildChecklistHTML(items) {
+    const total = items.length;
+    const done = items.filter(i => i.checked).length;
+    let html = '<div class="kb-checklist">';
+    if (total > 0) {
+      const pct = Math.round((done / total) * 100);
+      html += `<div class="kb-checklist-progress"><span>${done}/${total}</span><div class="kb-checklist-bar"><div class="kb-checklist-bar-fill" style="width:${pct}%"></div></div></div>`;
+    }
+    items.forEach((item, i) => {
+      html += `<div class="kb-checklist-item${item.checked ? ' kb-checked' : ''}" data-idx="${i}">
+        <input type="checkbox" ${item.checked ? 'checked' : ''} />
+        <input type="text" value="${esc(item.text)}" />
+        <button class="kb-checklist-remove" title="Remove">&times;</button>
+      </div>`;
+    });
+    html += `<button class="kb-checklist-add" type="button">+ Add item</button>`;
+    html += '</div>';
+    return html;
+  }
+
+  _attachChecklistEvents(container, items, onUpdate) {
+    container.querySelectorAll('.kb-checklist-item input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const idx = parseInt(cb.closest('.kb-checklist-item').dataset.idx);
+        items[idx].checked = cb.checked;
+        cb.closest('.kb-checklist-item').classList.toggle('kb-checked', cb.checked);
+        onUpdate();
+      });
+    });
+    container.querySelectorAll('.kb-checklist-item input[type="text"]').forEach(input => {
+      input.addEventListener('input', () => {
+        const idx = parseInt(input.closest('.kb-checklist-item').dataset.idx);
+        items[idx].text = input.value;
+      });
+    });
+    container.querySelectorAll('.kb-checklist-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.closest('.kb-checklist-item').dataset.idx);
+        items.splice(idx, 1);
+        this._refreshChecklist(container, items, onUpdate);
+      });
+    });
+    const addBtn = container.querySelector('.kb-checklist-add');
+    if (addBtn) {
+      addBtn.addEventListener('click', () => {
+        items.push({ checked: false, text: '' });
+        this._refreshChecklist(container, items, onUpdate);
+        requestAnimationFrame(() => {
+          const newItems = container.querySelectorAll('.kb-checklist-item input[type="text"]');
+          if (newItems.length) newItems[newItems.length - 1].focus();
+        });
+      });
+    }
+  }
+
+  _refreshChecklist(container, items, onUpdate) {
+    container.innerHTML = this._buildChecklistHTML(items);
+    this._attachChecklistEvents(container, items, onUpdate);
+    onUpdate();
+  }
+
+  _serializeDescription(text, items) {
+    let desc = text.trim();
+    if (items.length > 0) {
+      if (desc) desc += '\n\n';
+      desc += items.map(i => `- [${i.checked ? 'x' : ' '}] ${i.text}`).join('\n');
+    }
+    return desc;
+  }
+
   /* ─── Dispatch Form ─── */
 
   _showDispatchForm() {
@@ -1163,7 +1356,11 @@ export class KanbanBoard {
       </div>
       <div class="kb-field">
         <label>Description</label>
-        <textarea name="description" placeholder="Task description..." rows="3"></textarea>
+        <textarea name="description" placeholder="Task description..." rows="6"></textarea>
+      </div>
+      <div class="kb-field">
+        <label>Checklist</label>
+        <div class="kb-checklist-container"></div>
       </div>
       <div class="kb-field">
         <label>Priority</label>
@@ -1191,6 +1388,21 @@ export class KanbanBoard {
       </div>
     `;
 
+    // Init checklist
+    const dispatchChecklistItems = [];
+    const dispatchChecklistContainer = form.querySelector('.kb-checklist-container');
+    const updateDispatchChecklist = () => {
+      const total = dispatchChecklistItems.length;
+      const done = dispatchChecklistItems.filter(i => i.checked).length;
+      const progress = dispatchChecklistContainer.querySelector('.kb-checklist-progress');
+      if (progress) {
+        progress.querySelector('span').textContent = `${done}/${total}`;
+        progress.querySelector('.kb-checklist-bar-fill').style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+      }
+    };
+    dispatchChecklistContainer.innerHTML = this._buildChecklistHTML(dispatchChecklistItems);
+    this._attachChecklistEvents(dispatchChecklistContainer, dispatchChecklistItems, updateDispatchChecklist);
+
     // Cancel
     form.querySelector('.kb-form-btn--cancel').addEventListener('click', () => this._closeDispatchForm());
 
@@ -1198,7 +1410,8 @@ export class KanbanBoard {
     form.querySelector('.kb-form-btn--submit').addEventListener('click', () => {
       const profile = form.querySelector('[name="profile"]').value.trim();
       const title = form.querySelector('[name="title"]').value.trim();
-      const description = form.querySelector('[name="description"]').value.trim();
+      const rawDesc = form.querySelector('[name="description"]').value.trim();
+      const description = this._serializeDescription(rawDesc, dispatchChecklistItems);
       const priority = form.querySelector('[name="priority"]').value;
       const parentId = form.querySelector('[name="parent_task_id"]').value.trim();
       const goalId = form.querySelector('[name="goal_id"]').value;
@@ -1255,6 +1468,11 @@ export class KanbanBoard {
 
     const form = document.createElement('div');
     form.className = 'kb-form';
+
+    // Parse existing checklist items from description
+    const parsed = this._parseChecklist(task.description || '');
+    const editChecklistItems = [...parsed.items];
+
     form.innerHTML = `
       <h3>Edit Task</h3>
       <div class="kb-field">
@@ -1263,7 +1481,11 @@ export class KanbanBoard {
       </div>
       <div class="kb-field">
         <label>Description</label>
-        <textarea name="description" rows="3">${esc(task.description || '')}</textarea>
+        <textarea name="description" rows="6">${esc(parsed.text)}</textarea>
+      </div>
+      <div class="kb-field">
+        <label>Checklist</label>
+        <div class="kb-checklist-container"></div>
       </div>
       <div class="kb-field">
         <label>Priority</label>
@@ -1280,10 +1502,25 @@ export class KanbanBoard {
       </div>
     `;
 
+    // Init checklist
+    const editChecklistContainer = form.querySelector('.kb-checklist-container');
+    const updateEditChecklist = () => {
+      const total = editChecklistItems.length;
+      const done = editChecklistItems.filter(i => i.checked).length;
+      const progress = editChecklistContainer.querySelector('.kb-checklist-progress');
+      if (progress) {
+        progress.querySelector('span').textContent = `${done}/${total}`;
+        progress.querySelector('.kb-checklist-bar-fill').style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+      }
+    };
+    editChecklistContainer.innerHTML = this._buildChecklistHTML(editChecklistItems);
+    this._attachChecklistEvents(editChecklistContainer, editChecklistItems, updateEditChecklist);
+
     form.querySelector('.kb-form-btn--cancel').addEventListener('click', () => this._closeDispatchForm());
     form.querySelector('.kb-form-btn--submit').addEventListener('click', () => {
       const title = form.querySelector('[name="title"]').value.trim();
-      const description = form.querySelector('[name="description"]').value.trim();
+      const rawDesc = form.querySelector('[name="description"]').value.trim();
+      const description = this._serializeDescription(rawDesc, editChecklistItems);
       const priority = form.querySelector('[name="priority"]').value;
       if (!title) return;
       if (this.onEdit) this.onEdit(task.id, task.project || 'default', { title, description, priority });
