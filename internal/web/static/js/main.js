@@ -2198,41 +2198,7 @@ setInterval(() => {
   if (activeTab === "tasks") loadTasks();
 }, 5000);
 
-// --- Font scale (+/- zoom) ---
-
-const ZOOM_STEPS = [0.8, 0.9, 1.0, 1.1, 1.2, 1.4, 1.6, 1.8, 2.0];
-let currentZoomIdx = ZOOM_STEPS.indexOf(parseFloat(localStorage.getItem("font-scale") || "1"));
-if (currentZoomIdx < 0) currentZoomIdx = ZOOM_STEPS.indexOf(1.0);
-
-const zoomOutBtn = document.getElementById("zoom-out");
-const zoomInBtn = document.getElementById("zoom-in");
-const zoomLevelEl = document.getElementById("zoom-level");
-
-function applyZoom() {
-  const scale = ZOOM_STEPS[currentZoomIdx];
-  document.body.style.setProperty("--scale", scale);
-  localStorage.setItem("font-scale", String(scale));
-  if (zoomLevelEl) zoomLevelEl.textContent = Math.round(scale * 100) + "%";
-  if (zoomOutBtn) zoomOutBtn.disabled = currentZoomIdx === 0;
-  if (zoomInBtn) zoomInBtn.disabled = currentZoomIdx === ZOOM_STEPS.length - 1;
-}
-applyZoom();
-
-if (zoomOutBtn) zoomOutBtn.addEventListener("click", () => {
-  if (currentZoomIdx > 0) { currentZoomIdx--; applyZoom(); }
-});
-if (zoomInBtn) zoomInBtn.addEventListener("click", () => {
-  if (currentZoomIdx < ZOOM_STEPS.length - 1) { currentZoomIdx++; applyZoom(); }
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
-  if ((e.key === "+" || e.key === "=") && !e.ctrlKey && !e.metaKey) {
-    if (currentZoomIdx < ZOOM_STEPS.length - 1) { currentZoomIdx++; applyZoom(); }
-  } else if (e.key === "-" && !e.ctrlKey && !e.metaKey) {
-    if (currentZoomIdx > 0) { currentZoomIdx--; applyZoom(); }
-  }
-});
+// Font scale is handled by the zoom controls block at the bottom of the file.
 
 // --- Agent task label integration ---
 
@@ -2778,38 +2744,7 @@ shortcuts.register("ArrowLeft", "nav-prev", "Previous agent", () => {
   if (av) { av.triggerRipple(); openDetail(av); }
 });
 
-// Font scale shortcuts
-const scaleValues = ["1", "1.2", "1.5"];
-shortcuts.register("+", "scale-up", "Font scale up", () => {
-  const cur = document.body.style.getPropertyValue("--scale") || "1.2";
-  const idx = scaleValues.indexOf(cur);
-  if (idx < scaleValues.length - 1) {
-    const next = scaleValues[idx + 1];
-    document.body.style.setProperty("--scale", next);
-    localStorage.setItem("font-scale", next);
-    document.querySelectorAll(".scale-btn").forEach(b => b.classList.toggle("active", b.dataset.scale === next));
-  }
-});
-shortcuts.register("=", "scale-up", "Font scale up", () => {
-  const cur = document.body.style.getPropertyValue("--scale") || "1.2";
-  const idx = scaleValues.indexOf(cur);
-  if (idx < scaleValues.length - 1) {
-    const next = scaleValues[idx + 1];
-    document.body.style.setProperty("--scale", next);
-    localStorage.setItem("font-scale", next);
-    document.querySelectorAll(".scale-btn").forEach(b => b.classList.toggle("active", b.dataset.scale === next));
-  }
-});
-shortcuts.register("-", "scale-down", "Font scale down", () => {
-  const cur = document.body.style.getPropertyValue("--scale") || "1.2";
-  const idx = scaleValues.indexOf(cur);
-  if (idx > 0) {
-    const prev = scaleValues[idx - 1];
-    document.body.style.setProperty("--scale", prev);
-    localStorage.setItem("font-scale", prev);
-    document.querySelectorAll(".scale-btn").forEach(b => b.classList.toggle("active", b.dataset.scale === prev));
-  }
-});
+// Font scale shortcuts are in the zoom controls block below.
 
 shortcuts.register("?", "help", "Toggle help", () => toggleHelp());
 
