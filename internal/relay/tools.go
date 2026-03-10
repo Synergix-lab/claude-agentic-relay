@@ -3,34 +3,34 @@ package relay
 import "github.com/mark3labs/mcp-go/mcp"
 
 // asParam is added to every tool that uses agent identity.
-var asParam = mcp.WithString("as", mcp.Description("Act as this agent (overrides the default identity from the connection URL). Use this when managing multiple agents from a single session."))
+var asParam = mcp.WithString("as", mcp.Description("Override agent identity from URL"))
 
 // projectParam is added to every tool that needs project scoping.
 // It allows overriding the default ?project= from the URL,
 // so agents can switch projects without changing the MCP connection.
-var projectParam = mcp.WithString("project", mcp.Description("Project namespace (overrides the default from the connection URL). Agents, messages, and conversations are isolated per project."))
+var projectParam = mcp.WithString("project", mcp.Description("Override project from URL"))
 
 func whoamiTool() mcp.Tool {
 	return mcp.NewTool(
 		"whoami",
-		mcp.WithDescription("Identify your Claude Code session.\n\nHow it works: you generate a unique salt (3+ random words like 'purple-falcon-nebula'), include it in your message, then call this tool with that salt. The relay searches ~/.claude/ transcripts for the salt to find your session ID.\n\nNext step: use the returned session_id when calling register_agent."),
-		mcp.WithString("salt", mcp.Description("A unique string you just generated (e.g. 'purple-falcon-nebula'). Must be 3+ random words that appear in your conversation transcript. The relay uses this to match your session."), mcp.Required()),
+		mcp.WithDescription("Identify your Claude Code session. Generate a unique salt (3+ random words), include it in your message, then call this tool. Returns session_id for register_agent."),
+		mcp.WithString("salt", mcp.Description("Unique string you generated (3+ random words, e.g. 'purple-falcon-nebula')"), mcp.Required()),
 	)
 }
 
 func registerAgentTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_agent",
-		mcp.WithDescription("Register an agent with the relay. Call this once per agent at startup to announce their presence. Returns session_context with profile, tasks, unread messages, and conversations.\n\nIf is_executive=true, an 'admin' team ('leadership') is auto-created and the agent is added to it, enabling broadcast messages (send_message to='*')."),
+		mcp.WithDescription("Register/re-register an agent. Returns session_context. If is_executive=true, auto-joins 'leadership' admin team (enables broadcast)."),
 		projectParam,
-		mcp.WithString("name", mcp.Description("Unique agent name (e.g. 'lead', 'backend', 'frontend'). Re-registering the same name updates the agent. To rename, register the new name and call deactivate_agent on the old one."), mcp.Required()),
-		mcp.WithString("role", mcp.Description("Agent role description (e.g. 'FastAPI backend developer')")),
-		mcp.WithString("description", mcp.Description("What this agent is currently working on")),
-		mcp.WithString("reports_to", mcp.Description("Name of the agent this one reports to (for org hierarchy)")),
-		mcp.WithBoolean("is_executive", mcp.Description("Mark this agent as an executive (shows crown on canvas)")),
-		mcp.WithString("profile_slug", mcp.Description("Profile archetype this agent runs (links to a registered profile)")),
-		mcp.WithString("session_id", mcp.Description("Claude Code session ID ($CLAUDE_SESSION_ID) — used for activity tracking via hooks")),
-		mcp.WithString("interest_tags", mcp.Description("JSON array of interest tags for context budget filtering (e.g. '[\"database\",\"auth\"]')")),
+		mcp.WithString("name", mcp.Description("Unique agent name (re-registering updates)"), mcp.Required()),
+		mcp.WithString("role", mcp.Description("Role description")),
+		mcp.WithString("description", mcp.Description("Current work focus")),
+		mcp.WithString("reports_to", mcp.Description("Parent agent name (org hierarchy)")),
+		mcp.WithBoolean("is_executive", mcp.Description("Executive flag (enables broadcast)")),
+		mcp.WithString("profile_slug", mcp.Description("Profile archetype to run")),
+		mcp.WithString("session_id", mcp.Description("$CLAUDE_SESSION_ID for activity tracking")),
+		mcp.WithString("interest_tags", mcp.Description("JSON array of tags for budget filtering")),
 		mcp.WithNumber("max_context_bytes", mcp.Description("Max bytes for budget-pruned inbox (default: 16384)")),
 	)
 }
@@ -38,44 +38,44 @@ func registerAgentTool() mcp.Tool {
 func sendMessageTool() mcp.Tool {
 	return mcp.NewTool(
 		"send_message",
-		mcp.WithDescription("Send a message to another agent. Use '*' as recipient for broadcast (requires admin team membership — executives get this automatically). Use 'team:<slug>' to message a team. Set conversation_id to send to a conversation."),
+		mcp.WithDescription("Send a message. Recipients: agent name, '*' (broadcast, requires admin team), 'team:<slug>', or set conversation_id."),
 		asParam,
 		projectParam,
-		mcp.WithString("to", mcp.Description("Recipient agent name, or '*' for broadcast. Ignored when conversation_id is set."), mcp.Required()),
+		mcp.WithString("to", mcp.Description("Recipient: agent name, '*', or 'team:<slug>'"), mcp.Required()),
 		mcp.WithString("type",
 			mcp.Description("Message type"),
 			mcp.Enum("question", "response", "notification", "code-snippet", "task", "user_question"),
 		),
 		mcp.WithString("subject", mcp.Description("Message subject line"), mcp.Required()),
 		mcp.WithString("content", mcp.Description("Message body content"), mcp.Required()),
-		mcp.WithString("reply_to", mcp.Description("Message ID to reply to (for threading)")),
-		mcp.WithString("metadata", mcp.Description("JSON string of additional metadata")),
-		mcp.WithString("conversation_id", mcp.Description("Send message to a conversation instead of a single agent")),
+		mcp.WithString("reply_to", mcp.Description("Message ID for threading")),
+		mcp.WithString("metadata", mcp.Description("JSON metadata")),
+		mcp.WithString("conversation_id", mcp.Description("Target conversation (overrides to)")),
 		mcp.WithString("priority",
-			mcp.Description("Message priority. P0=interrupt (critical), P1=steering (important), P2=advisory (default), P3=info (low). MACP aliases accepted."),
+			mcp.Description("P0=interrupt, P1=steering, P2=advisory (default), P3=info"),
 			mcp.Enum("P0", "P1", "P2", "P3", "interrupt", "steering", "advisory", "info"),
 		),
-		mcp.WithNumber("ttl_seconds", mcp.Description("Time-to-live in seconds (default: 3600 = 1h, 0 = never expires). Expired messages are excluded from inbox.")),
+		mcp.WithNumber("ttl_seconds", mcp.Description("TTL in seconds (default: 3600, 0=never)")),
 	)
 }
 
 func getInboxTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_inbox",
-		mcp.WithDescription("Get messages from an agent's inbox. Returns messages sent to them or broadcast (excluding their own broadcasts)."),
+		mcp.WithDescription("Get inbox messages (sent to agent or broadcast)."),
 		asParam,
 		projectParam,
 		mcp.WithBoolean("unread_only", mcp.Description("Only return unread messages (default: true)")),
 		mcp.WithNumber("limit", mcp.Description("Max number of messages to return (default: 10).")),
-		mcp.WithBoolean("full_content", mcp.Description("Return full message content instead of truncating to 300 chars (default: false)")),
-		mcp.WithBoolean("apply_budget", mcp.Description("Apply context budget pruning: filters messages by priority, tag relevance, and freshness to fit within agent's max_context_bytes (default: false)")),
+		mcp.WithBoolean("full_content", mcp.Description("Full content instead of 300-char truncation (default: false)")),
+		mcp.WithBoolean("apply_budget", mcp.Description("Budget-prune by priority/tags/freshness (default: false)")),
 	)
 }
 
 func ackDeliveryTool() mcp.Tool {
 	return mcp.NewTool(
 		"ack_delivery",
-		mcp.WithDescription("Acknowledge receipt of a message delivery. Transitions delivery state from surfaced to acknowledged. Use the delivery_id returned by get_inbox."),
+		mcp.WithDescription("Acknowledge a message delivery (surfaced → acknowledged)."),
 		mcp.WithString("delivery_id", mcp.Description("Delivery ID to acknowledge"), mcp.Required()),
 	)
 }
@@ -83,7 +83,7 @@ func ackDeliveryTool() mcp.Tool {
 func getThreadTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_thread",
-		mcp.WithDescription("Get a complete thread of messages starting from any message in the thread."),
+		mcp.WithDescription("Get a complete message thread."),
 		projectParam,
 		mcp.WithString("message_id", mcp.Description("Any message ID in the thread"), mcp.Required()),
 	)
@@ -92,7 +92,7 @@ func getThreadTool() mcp.Tool {
 func listAgentsTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_agents",
-		mcp.WithDescription("List all registered agents and their status."),
+		mcp.WithDescription("List agents with status and activity."),
 		projectParam,
 	)
 }
@@ -107,14 +107,14 @@ func markReadTool() mcp.Tool {
 			mcp.Description("List of message IDs to mark as read"),
 			mcp.WithStringItems(),
 		),
-		mcp.WithString("conversation_id", mcp.Description("Mark all messages in a conversation as read (alternative to message_ids)")),
+		mcp.WithString("conversation_id", mcp.Description("Mark entire conversation as read")),
 	)
 }
 
 func createConversationTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_conversation",
-		mcp.WithDescription("Create a multi-agent conversation. All members will see messages sent to it."),
+		mcp.WithDescription("Create a multi-agent conversation."),
 		asParam,
 		projectParam,
 		mcp.WithString("title", mcp.Description("Conversation title"), mcp.Required()),
@@ -129,7 +129,7 @@ func createConversationTool() mcp.Tool {
 func listConversationsTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_conversations",
-		mcp.WithDescription("List conversations you are a member of, with unread counts."),
+		mcp.WithDescription("List your conversations with unread counts."),
 		asParam,
 		projectParam,
 	)
@@ -138,20 +138,20 @@ func listConversationsTool() mcp.Tool {
 func getConversationMessagesTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_conversation_messages",
-		mcp.WithDescription("Get messages from a conversation, ordered chronologically."),
+		mcp.WithDescription("Get conversation messages (chronological)."),
 		asParam,
 		projectParam,
 		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
 		mcp.WithNumber("limit", mcp.Description("Max number of messages to return (default: 50)")),
-		mcp.WithString("format", mcp.Description("Response format: 'full' (default), 'compact' (metadata only: id, from, type, subject, timestamp), 'digest' (metadata + first 200 chars of content)")),
-		mcp.WithBoolean("full_content", mcp.Description("When format is 'full', return complete message content without truncation (default: true)")),
+		mcp.WithString("format", mcp.Description("'full' (default), 'compact' (metadata only), 'digest' (metadata + 200 chars)")),
+		mcp.WithBoolean("full_content", mcp.Description("Full content in 'full' format (default: true)")),
 	)
 }
 
 func inviteToConversationTool() mcp.Tool {
 	return mcp.NewTool(
 		"invite_to_conversation",
-		mcp.WithDescription("Add an agent to an existing conversation."),
+		mcp.WithDescription("Invite an agent to a conversation."),
 		asParam,
 		projectParam,
 		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
@@ -162,7 +162,7 @@ func inviteToConversationTool() mcp.Tool {
 func leaveConversationTool() mcp.Tool {
 	return mcp.NewTool(
 		"leave_conversation",
-		mcp.WithDescription("Leave a conversation. You will no longer see its messages."),
+		mcp.WithDescription("Leave a conversation."),
 		asParam,
 		projectParam,
 		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
@@ -172,7 +172,7 @@ func leaveConversationTool() mcp.Tool {
 func archiveConversationTool() mcp.Tool {
 	return mcp.NewTool(
 		"archive_conversation",
-		mcp.WithDescription("Archive a conversation. It will no longer appear in anyone's list."),
+		mcp.WithDescription("Archive a conversation (hidden from all members)."),
 		asParam,
 		projectParam,
 		mcp.WithString("conversation_id", mcp.Description("The conversation ID"), mcp.Required()),
@@ -184,22 +184,22 @@ func archiveConversationTool() mcp.Tool {
 func setMemoryTool() mcp.Tool {
 	return mcp.NewTool(
 		"set_memory",
-		mcp.WithDescription("Store a piece of knowledge in persistent memory. If the key exists with a different value at the same scope, a conflict is flagged (both versions preserved). Use resolve_conflict to pick the truth."),
+		mcp.WithDescription("Store knowledge in persistent memory. Duplicate keys at same scope create a conflict (use resolve_conflict)."),
 		asParam,
 		projectParam,
-		mcp.WithString("key", mcp.Description("Memory key (e.g. 'auth-header-format', 'db-schema-version')"), mcp.Required()),
-		mcp.WithString("value", mcp.Description("The knowledge to store"), mcp.Required()),
-		mcp.WithArray("tags", mcp.Description("Categorization tags for search and filtering (e.g. ['auth', 'api'])"), mcp.WithStringItems()),
+		mcp.WithString("key", mcp.Description("Memory key"), mcp.Required()),
+		mcp.WithString("value", mcp.Description("Knowledge to store"), mcp.Required()),
+		mcp.WithArray("tags", mcp.Description("Tags for filtering"), mcp.WithStringItems()),
 		mcp.WithString("scope",
-			mcp.Description("Visibility scope: 'agent' (private), 'project' (shared with team), 'global' (cross-project)"),
+			mcp.Description("agent (private) / project (shared) / global"),
 			mcp.Enum("agent", "project", "global"),
 		),
 		mcp.WithString("confidence",
-			mcp.Description("How this knowledge was obtained"),
+			mcp.Description("Provenance"),
 			mcp.Enum("stated", "inferred", "observed"),
 		),
 		mcp.WithString("layer",
-			mcp.Description("Memory layer: 'constraints' (hard rules, never override), 'behavior' (defaults, can adapt), 'context' (ephemeral, session-specific)"),
+			mcp.Description("constraints (hard rules) / behavior (defaults) / context (ephemeral)"),
 			mcp.Enum("constraints", "behavior", "context"),
 		),
 	)
@@ -208,12 +208,12 @@ func setMemoryTool() mcp.Tool {
 func getMemoryTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_memory",
-		mcp.WithDescription("Retrieve a memory by key. Searches with scope cascade: agent → project → global. If a conflict exists, returns ALL conflicting values with provenance so you can decide."),
+		mcp.WithDescription("Get memory by key (cascades: agent → project → global). Returns all conflicting values if any."),
 		asParam,
 		projectParam,
-		mcp.WithString("key", mcp.Description("The memory key to look up"), mcp.Required()),
+		mcp.WithString("key", mcp.Description("Memory key"), mcp.Required()),
 		mcp.WithString("scope",
-			mcp.Description("Specific scope to search (skips cascade). Leave empty for automatic cascade."),
+			mcp.Description("Skip cascade, search specific scope"),
 			mcp.Enum("agent", "project", "global"),
 		),
 	)
@@ -222,13 +222,13 @@ func getMemoryTool() mcp.Tool {
 func searchMemoryTool() mcp.Tool {
 	return mcp.NewTool(
 		"search_memory",
-		mcp.WithDescription("Full-text search across memories. Returns ranked results with provenance and confidence. Cross-scope search by default (respects agent privacy)."),
+		mcp.WithDescription("Full-text search across memories (cross-scope, respects privacy)."),
 		asParam,
 		projectParam,
-		mcp.WithString("query", mcp.Description("Search query (full-text search)"), mcp.Required()),
+		mcp.WithString("query", mcp.Description("Search query"), mcp.Required()),
 		mcp.WithArray("tags", mcp.Description("Filter by tags"), mcp.WithStringItems()),
 		mcp.WithString("scope",
-			mcp.Description("Limit search to a specific scope"),
+			mcp.Description("Limit to scope"),
 			mcp.Enum("agent", "project", "global"),
 		),
 		mcp.WithNumber("limit", mcp.Description("Max results to return (default: 20)")),
@@ -238,7 +238,7 @@ func searchMemoryTool() mcp.Tool {
 func listMemoriesTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_memories",
-		mcp.WithDescription("Browse memories with filtering. Shows key, truncated value, tags, provenance. Useful for 'what does the team know about X?'"),
+		mcp.WithDescription("Browse memories with filtering (key, truncated value, tags)."),
 		asParam,
 		projectParam,
 		mcp.WithString("scope",
@@ -246,7 +246,7 @@ func listMemoriesTool() mcp.Tool {
 			mcp.Enum("agent", "project", "global"),
 		),
 		mcp.WithArray("tags", mcp.Description("Filter by tags"), mcp.WithStringItems()),
-		mcp.WithString("agent", mcp.Description("Filter by author agent name")),
+		mcp.WithString("agent", mcp.Description("Filter by author")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
 	)
 }
@@ -254,12 +254,12 @@ func listMemoriesTool() mcp.Tool {
 func deleteMemoryTool() mcp.Tool {
 	return mcp.NewTool(
 		"delete_memory",
-		mcp.WithDescription("Soft-delete a memory (archived, never hard deleted). Only the author or same scope can archive."),
+		mcp.WithDescription("Soft-delete (archive) a memory."),
 		asParam,
 		projectParam,
-		mcp.WithString("key", mcp.Description("The memory key to archive"), mcp.Required()),
+		mcp.WithString("key", mcp.Description("Memory key to archive"), mcp.Required()),
 		mcp.WithString("scope",
-			mcp.Description("Scope of the memory to delete"),
+			mcp.Description("Scope to delete from"),
 			mcp.Enum("agent", "project", "global"),
 		),
 	)
@@ -268,7 +268,7 @@ func deleteMemoryTool() mcp.Tool {
 func resolveConflictTool() mcp.Tool {
 	return mcp.NewTool(
 		"resolve_conflict",
-		mcp.WithDescription("Resolve a flagged memory conflict by choosing one value or providing a new one. The rejected version is archived with resolution metadata."),
+		mcp.WithDescription("Resolve a memory conflict. Rejected version is archived."),
 		asParam,
 		projectParam,
 		mcp.WithString("key", mcp.Description("The conflicted memory key"), mcp.Required()),
@@ -285,22 +285,22 @@ func resolveConflictTool() mcp.Tool {
 func registerProfileTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_profile",
-		mcp.WithDescription("Create or update a profile archetype. A profile defines a reusable agent role with a context pack (soul, skills, working style)."),
+		mcp.WithDescription("Create/update a profile archetype (role + context pack + skills)."),
 		projectParam,
-		mcp.WithString("slug", mcp.Description("Unique profile identifier (e.g. 'backend', 'frontend', 'devops')"), mcp.Required()),
-		mcp.WithString("name", mcp.Description("Display name for the profile"), mcp.Required()),
+		mcp.WithString("slug", mcp.Description("Profile identifier"), mcp.Required()),
+		mcp.WithString("name", mcp.Description("Display name"), mcp.Required()),
 		mcp.WithString("role", mcp.Description("Role description")),
-		mcp.WithString("context_pack", mcp.Description("Markdown blob: soul, skills, working style")),
-		mcp.WithString("soul_keys", mcp.Description("Memory keys to load at boot. Accepts JSON string '[\"key1\",\"key2\"]' or native array.")),
-		mcp.WithString("skills", mcp.Description("Skill objects. Accepts JSON string or native array. Format: [{\"id\":\"...\",\"name\":\"...\",\"tags\":[...]}]")),
-		mcp.WithString("vault_paths", mcp.Description("Vault doc path patterns to auto-inject at boot. Accepts JSON string or native array. Supports globs: [\"guides/*.md\"]. {slug} is resolved to the profile slug.")),
+		mcp.WithString("context_pack", mcp.Description("Markdown: soul, skills, working style")),
+		mcp.WithString("soul_keys", mcp.Description("Memory keys to load at boot (JSON array)")),
+		mcp.WithString("skills", mcp.Description("Skill objects (JSON array)")),
+		mcp.WithString("vault_paths", mcp.Description("Vault paths to auto-inject at boot (globs, {slug} resolved)")),
 	)
 }
 
 func getProfileTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_profile",
-		mcp.WithDescription("Retrieve a profile with its full context pack and skills."),
+		mcp.WithDescription("Get a profile with full context pack."),
 		projectParam,
 		mcp.WithString("slug", mcp.Description("Profile slug to retrieve"), mcp.Required()),
 	)
@@ -309,7 +309,7 @@ func getProfileTool() mcp.Tool {
 func listProfilesTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_profiles",
-		mcp.WithDescription("List all available profiles in a project."),
+		mcp.WithDescription("List all profiles."),
 		projectParam,
 	)
 }
@@ -317,9 +317,9 @@ func listProfilesTool() mcp.Tool {
 func findProfilesTool() mcp.Tool {
 	return mcp.NewTool(
 		"find_profiles",
-		mcp.WithDescription("Find profiles by skill tag. Returns profiles whose skills match the given tag."),
+		mcp.WithDescription("Find profiles by skill tag."),
 		projectParam,
-		mcp.WithString("skill_tag", mcp.Description("Skill tag to search for (e.g. 'database', 'auth', 'frontend')"), mcp.Required()),
+		mcp.WithString("skill_tag", mcp.Description("Skill tag to search for"), mcp.Required()),
 	)
 }
 
@@ -328,26 +328,26 @@ func findProfilesTool() mcp.Tool {
 func dispatchTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"dispatch_task",
-		mcp.WithDescription("Dispatch a task to a profile archetype. Creates a task in 'pending' state for agents running that profile to claim.\n\nUse profile='human' for tasks that require human action (API keys, approvals, purchases). A 'human' profile is auto-created on first use.\n\nIf no board_id is provided, the task is auto-assigned to the first existing board (or a 'backlog' board is auto-created)."),
+		mcp.WithDescription("Dispatch a task to a profile (pending → claim → start → complete). Use profile='human' for human actions. Auto-assigns to first board if none specified."),
 		asParam,
 		projectParam,
-		mcp.WithString("profile", mcp.Description("Profile slug to dispatch to"), mcp.Required()),
+		mcp.WithString("profile", mcp.Description("Target profile slug ('human' for user tasks)"), mcp.Required()),
 		mcp.WithString("title", mcp.Description("Task title"), mcp.Required()),
 		mcp.WithString("description", mcp.Description("Detailed task description")),
 		mcp.WithString("priority",
 			mcp.Description("Task priority"),
 			mcp.Enum("P0", "P1", "P2", "P3"),
 		),
-		mcp.WithString("parent_task_id", mcp.Description("Parent task ID for subtasks")),
-		mcp.WithString("board_id", mcp.Description("Board ID to assign this task to (from create_board)")),
-		mcp.WithString("goal_id", mcp.Description("Goal ID to link this task to (from create_goal)")),
+		mcp.WithString("parent_task_id", mcp.Description("Parent task ID (subtask)")),
+		mcp.WithString("board_id", mcp.Description("Board ID")),
+		mcp.WithString("goal_id", mcp.Description("Linked goal ID")),
 	)
 }
 
 func claimTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"claim_task",
-		mcp.WithDescription("Claim a pending task. Transitions state to 'accepted'."),
+		mcp.WithDescription("Claim a pending task (→ accepted)."),
 		asParam,
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID to claim"), mcp.Required()),
@@ -357,7 +357,7 @@ func claimTaskTool() mcp.Tool {
 func startTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"start_task",
-		mcp.WithDescription("Start working on a task. Transitions state to 'in-progress'. Can skip 'accepted' state."),
+		mcp.WithDescription("Start a task (→ in-progress). Can skip accepted."),
 		asParam,
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID to start"), mcp.Required()),
@@ -367,7 +367,7 @@ func startTaskTool() mcp.Tool {
 func completeTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"complete_task",
-		mcp.WithDescription("Complete a task with a result. Transitions state to 'done'."),
+		mcp.WithDescription("Complete a task (→ done). Notifies dispatcher."),
 		asParam,
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID to complete"), mcp.Required()),
@@ -378,7 +378,7 @@ func completeTaskTool() mcp.Tool {
 func blockTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"block_task",
-		mcp.WithDescription("Mark a task as blocked with a reason. Triggers push notification to dispatcher. If task has a parent, notifies parent's dispatcher too."),
+		mcp.WithDescription("Block a task with reason (→ blocked). Notifies dispatcher + parent chain."),
 		asParam,
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID to block"), mcp.Required()),
@@ -389,7 +389,7 @@ func blockTaskTool() mcp.Tool {
 func cancelTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"cancel_task",
-		mcp.WithDescription("Cancel a task from any state. Optionally provide a reason. Notifies the dispatcher."),
+		mcp.WithDescription("Cancel a task (→ cancelled). Notifies dispatcher."),
 		asParam,
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID to cancel"), mcp.Required()),
@@ -400,17 +400,17 @@ func cancelTaskTool() mcp.Tool {
 func getTaskTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_task",
-		mcp.WithDescription("Get full details of a task, optionally with its subtask chain."),
+		mcp.WithDescription("Get full task details (optionally with subtasks)."),
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID"), mcp.Required()),
-		mcp.WithBoolean("include_subtasks", mcp.Description("Include subtask chain (max depth 3). Default: false")),
+		mcp.WithBoolean("include_subtasks", mcp.Description("Include subtasks (max depth 3)")),
 	)
 }
 
 func listTasksTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_tasks",
-		mcp.WithDescription("List tasks with filtering. Returns a task board view sorted by priority."),
+		mcp.WithDescription("List tasks with filtering (sorted by priority)."),
 		asParam,
 		projectParam,
 		mcp.WithString("status",
@@ -422,7 +422,7 @@ func listTasksTool() mcp.Tool {
 			mcp.Description("Filter by priority"),
 			mcp.Enum("P0", "P1", "P2", "P3"),
 		),
-		mcp.WithString("assigned_to", mcp.Description("Filter by assigned agent name")),
+		mcp.WithString("assigned_to", mcp.Description("Filter by assigned agent")),
 		mcp.WithString("board_id", mcp.Description("Filter by board ID")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
 	)
@@ -433,11 +433,11 @@ func listTasksTool() mcp.Tool {
 func createBoardTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_board",
-		mcp.WithDescription("Create a task board for a project. Agents can then dispatch tasks to this board. Returns the board with its ID."),
+		mcp.WithDescription("Create a task board."),
 		asParam,
 		projectParam,
 		mcp.WithString("name", mcp.Description("Board display name"), mcp.Required()),
-		mcp.WithString("slug", mcp.Description("Board slug (unique per project, e.g. 'sprint-1', 'bugs')"), mcp.Required()),
+		mcp.WithString("slug", mcp.Description("Board slug (unique per project)"), mcp.Required()),
 		mcp.WithString("description", mcp.Description("Board description")),
 	)
 }
@@ -445,7 +445,7 @@ func createBoardTool() mcp.Tool {
 func listBoardsTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_boards",
-		mcp.WithDescription("List all task boards for a project."),
+		mcp.WithDescription("List task boards."),
 		projectParam,
 	)
 }
@@ -453,7 +453,7 @@ func listBoardsTool() mcp.Tool {
 func archiveBoardTool() mcp.Tool {
 	return mcp.NewTool(
 		"archive_board",
-		mcp.WithDescription("Archive a task board and all its tasks. The board disappears from listings but data is preserved. Use this to clean up old sprint boards."),
+		mcp.WithDescription("Archive a board and its tasks (hidden, data preserved)."),
 		asParam,
 		projectParam,
 		mcp.WithString("board_id", mcp.Description("Board ID to archive"), mcp.Required()),
@@ -463,21 +463,21 @@ func archiveBoardTool() mcp.Tool {
 func deleteBoardTool() mcp.Tool {
 	return mcp.NewTool(
 		"delete_board",
-		mcp.WithDescription("Permanently delete an archived board. Only works on boards that have been archived first (safety check). Tasks are NOT deleted."),
+		mcp.WithDescription("Delete an archived board (must archive first). Tasks kept."),
 		asParam,
 		projectParam,
-		mcp.WithString("board_id", mcp.Description("Board ID to delete (must be archived first)"), mcp.Required()),
+		mcp.WithString("board_id", mcp.Description("Board ID (must be archived)"), mcp.Required()),
 	)
 }
 
 func archiveTasksTool() mcp.Tool {
 	return mcp.NewTool(
 		"archive_tasks",
-		mcp.WithDescription("Archive completed/cancelled tasks to clean up boards. Soft-deletes tasks so they no longer appear in listings. Archived tasks are never hard-deleted. Use this to keep boards manageable."),
+		mcp.WithDescription("Archive done/cancelled tasks (soft-delete from listings)."),
 		asParam,
 		projectParam,
-		mcp.WithString("status", mcp.Description("Status to archive: 'done', 'cancelled', or empty for both"), mcp.Enum("done", "cancelled", "")),
-		mcp.WithString("board_id", mcp.Description("Only archive tasks on this board (optional, empty = all boards)")),
+		mcp.WithString("status", mcp.Description("'done', 'cancelled', or empty for both"), mcp.Enum("done", "cancelled", "")),
+		mcp.WithString("board_id", mcp.Description("Limit to board (empty = all)")),
 	)
 }
 
@@ -486,7 +486,7 @@ func archiveTasksTool() mcp.Tool {
 func createGoalTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_goal",
-		mcp.WithDescription("Create a goal (objective) in the cascade hierarchy. Goals are NOT tasks — they don't appear in task boards. Goals flow: mission > project_goal > agent_goal. To create actionable work items, use dispatch_task() and link them to goals via goal_id. Goal progress is tracked by counting linked tasks."),
+		mcp.WithDescription("Create a goal in the cascade (mission → project_goal → agent_goal). Link tasks via goal_id. Progress = linked task completion."),
 		asParam,
 		projectParam,
 		mcp.WithString("type",
@@ -496,15 +496,15 @@ func createGoalTool() mcp.Tool {
 		),
 		mcp.WithString("title", mcp.Description("Goal title"), mcp.Required()),
 		mcp.WithString("description", mcp.Description("Goal description")),
-		mcp.WithString("parent_goal_id", mcp.Description("Parent goal ID (for cascading: mission > project_goal > agent_goal)")),
-		mcp.WithString("owner_agent", mcp.Description("Agent name that owns this goal (typically for agent_goal type)")),
+		mcp.WithString("parent_goal_id", mcp.Description("Parent goal ID")),
+		mcp.WithString("owner_agent", mcp.Description("Owner agent name")),
 	)
 }
 
 func listGoalsTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_goals",
-		mcp.WithDescription("List goals with filtering and progress info."),
+		mcp.WithDescription("List goals with progress."),
 		projectParam,
 		mcp.WithString("type",
 			mcp.Description("Filter by goal type"),
@@ -514,7 +514,7 @@ func listGoalsTool() mcp.Tool {
 			mcp.Description("Filter by status"),
 			mcp.Enum("active", "completed", "paused"),
 		),
-		mcp.WithString("owner_agent", mcp.Description("Filter by owner agent")),
+		mcp.WithString("owner_agent", mcp.Description("Filter by owner")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
 	)
 }
@@ -522,7 +522,7 @@ func listGoalsTool() mcp.Tool {
 func getGoalTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_goal",
-		mcp.WithDescription("Get full goal details including ancestry chain, progress, and children."),
+		mcp.WithDescription("Get goal with ancestry, progress, and children."),
 		projectParam,
 		mcp.WithString("goal_id", mcp.Description("Goal ID"), mcp.Required()),
 	)
@@ -547,7 +547,7 @@ func updateGoalTool() mcp.Tool {
 func getGoalCascadeTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_goal_cascade",
-		mcp.WithDescription("Get the full goal hierarchy tree for a project with progress on each node."),
+		mcp.WithDescription("Get full goal hierarchy tree with progress."),
 		projectParam,
 	)
 }
@@ -557,19 +557,19 @@ func getGoalCascadeTool() mcp.Tool {
 func registerVaultTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_vault",
-		mcp.WithDescription("Register a vault (markdown docs folder) for a project. The relay indexes all .md files and watches for changes via fsnotify. One vault per project. Re-registering replaces the previous vault path.\n\nSuggested vault location: ~/.agent-relay/projects/<project-name>/vault/\n\nAfter registering, update your profiles' vault_paths to reference the new docs so they auto-inject at agent boot."),
+		mcp.WithDescription("Register a vault (markdown docs folder). Indexes .md files, watches for changes. One per project, re-register replaces."),
 		projectParam,
-		mcp.WithString("path", mcp.Description("Absolute path to the vault directory (e.g. '/Users/me/my-org-docs')"), mcp.Required()),
+		mcp.WithString("path", mcp.Description("Absolute path to vault directory"), mcp.Required()),
 	)
 }
 
 func searchVaultTool() mcp.Tool {
 	return mcp.NewTool(
 		"search_vault",
-		mcp.WithDescription("Full-text search across indexed vault documents (markdown files). Returns matching docs with excerpts. Use get_vault_doc to retrieve full content after finding a match."),
+		mcp.WithDescription("Search vault docs (FTS5). Use get_vault_doc for full content."),
 		projectParam,
-		mcp.WithString("query", mcp.Description("Search query (FTS5 syntax: plain words, OR, phrases in quotes)"), mcp.Required()),
-		mcp.WithString("tags", mcp.Description("JSON array of tags to filter by (e.g. [\"guides\",\"decisions\"])")),
+		mcp.WithString("query", mcp.Description("FTS5 query (words, OR, \"phrases\")"), mcp.Required()),
+		mcp.WithString("tags", mcp.Description("JSON array of tags")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 10)")),
 	)
 }
@@ -577,18 +577,18 @@ func searchVaultTool() mcp.Tool {
 func getVaultDocTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_vault_doc",
-		mcp.WithDescription("Get the full content of a vault document by its path. Use search_vault first to find the right path."),
+		mcp.WithDescription("Get full vault document content by path."),
 		projectParam,
-		mcp.WithString("path", mcp.Description("Document path relative to vault root (e.g. 'guides/supabase-auth-config.md')"), mcp.Required()),
+		mcp.WithString("path", mcp.Description("Path relative to vault root"), mcp.Required()),
 	)
 }
 
 func listVaultDocsTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_vault_docs",
-		mcp.WithDescription("List indexed vault documents with optional tag filtering. Returns metadata only (no content)."),
+		mcp.WithDescription("List vault documents (metadata only)."),
 		projectParam,
-		mcp.WithString("tags", mcp.Description("JSON array of tags to filter by")),
+		mcp.WithString("tags", mcp.Description("JSON array of tags")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 100)")),
 	)
 }
@@ -598,28 +598,28 @@ func listVaultDocsTool() mcp.Tool {
 func claimFilesTool() mcp.Tool {
 	return mcp.NewTool(
 		"claim_files",
-		mcp.WithDescription("Declare which files you are editing. Broadcasts a steering-priority message to all agents in the project. Other agents should avoid editing these files."),
+		mcp.WithDescription("Claim files you're editing (broadcasts lock to all agents)."),
 		asParam,
 		projectParam,
-		mcp.WithString("file_paths", mcp.Description("JSON array of file paths being claimed (e.g. '[\"src/auth.go\",\"src/db.go\"]')"), mcp.Required()),
-		mcp.WithNumber("ttl_seconds", mcp.Description("How long the claim lasts (default: 1800 = 30min)")),
+		mcp.WithString("file_paths", mcp.Description("JSON array of file paths"), mcp.Required()),
+		mcp.WithNumber("ttl_seconds", mcp.Description("Claim duration (default: 1800)")),
 	)
 }
 
 func releaseFilesTool() mcp.Tool {
 	return mcp.NewTool(
 		"release_files",
-		mcp.WithDescription("Release previously claimed files. Broadcasts an info-priority message."),
+		mcp.WithDescription("Release claimed files."),
 		asParam,
 		projectParam,
-		mcp.WithString("file_paths", mcp.Description("JSON array of file paths to release (must match a previous claim)"), mcp.Required()),
+		mcp.WithString("file_paths", mcp.Description("JSON array of file paths"), mcp.Required()),
 	)
 }
 
 func listLocksTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_locks",
-		mcp.WithDescription("List all active file locks in a project. Shows which agent holds which files."),
+		mcp.WithDescription("List active file locks."),
 		projectParam,
 	)
 }
@@ -629,7 +629,7 @@ func listLocksTool() mcp.Tool {
 func deactivateAgentTool() mcp.Tool {
 	return mcp.NewTool(
 		"deactivate_agent",
-		mcp.WithDescription("Permanently deactivate an agent. It disappears from list_agents and stops receiving messages. To come back: call register_agent again. For temporary pause, use sleep_agent instead."),
+		mcp.WithDescription("Permanently deactivate an agent. Re-register to restore. For temporary pause, use sleep_agent."),
 		projectParam,
 		mcp.WithString("name", mcp.Description("Agent name to deactivate"), mcp.Required()),
 	)
@@ -638,7 +638,7 @@ func deactivateAgentTool() mcp.Tool {
 func deleteAgentTool() mcp.Tool {
 	return mcp.NewTool(
 		"delete_agent",
-		mcp.WithDescription("Soft-delete an agent. It disappears from the UI entirely but stays in the database. To restore: call register_agent again."),
+		mcp.WithDescription("Soft-delete an agent (hidden from UI, re-register to restore)."),
 		projectParam,
 		mcp.WithString("name", mcp.Description("Agent name to delete"), mcp.Required()),
 	)
@@ -647,7 +647,7 @@ func deleteAgentTool() mcp.Tool {
 func sleepAgentTool() mcp.Tool {
 	return mcp.NewTool(
 		"sleep_agent",
-		mcp.WithDescription("Put an agent to sleep. It stays visible in list_agents (status='sleeping') but signals it's not actively working. Messages are still queued. Wake up by calling register_agent again."),
+		mcp.WithDescription("Sleep agent (status='sleeping', messages queued). Re-register to wake."),
 		asParam,
 		projectParam,
 	)
@@ -658,7 +658,7 @@ func sleepAgentTool() mcp.Tool {
 func deleteProjectTool() mcp.Tool {
 	return mcp.NewTool(
 		"delete_project",
-		mcp.WithDescription("Permanently delete a project and ALL its data (agents, tasks, messages, memories, boards, goals, etc). This is irreversible. Use to clean up empty or obsolete projects."),
+		mcp.WithDescription("IRREVERSIBLE: Delete a project and ALL its data."),
 		mcp.WithString("project", mcp.Description("Project name to delete"), mcp.Required()),
 	)
 }
@@ -668,11 +668,11 @@ func deleteProjectTool() mcp.Tool {
 func createProjectTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_project",
-		mcp.WithDescription("Set up a new project on the relay. This is the FIRST tool to call. It creates the project, analyzes your codebase, and returns a full onboarding plan that you must execute step by step — like a management game tutorial. You will become the setup agent: analyze the code, store knowledge, create the org (CTO + tech leads), set up the vault, profiles, goals, and board. Everything needed for multi-agent work."),
-		mcp.WithString("name", mcp.Description("Project name (lowercase, no spaces — e.g. 'my-app', 'acme-api')"), mcp.Required()),
-		mcp.WithString("description", mcp.Description("One-line description of the project")),
-		mcp.WithString("cwd", mcp.Description("Absolute path to the project root directory (for vault setup)")),
-		mcp.WithBoolean("interactive", mcp.Description("Interactive mode: present findings and wait for user approval at each phase instead of executing automatically. Default: false (auto mode).")),
+		mcp.WithDescription("Create a project. Returns an onboarding plan to execute (org, vault, profiles, goals, board setup)."),
+		mcp.WithString("name", mcp.Description("Project name (lowercase, no spaces)"), mcp.Required()),
+		mcp.WithString("description", mcp.Description("One-line project description")),
+		mcp.WithString("cwd", mcp.Description("Project root path (for vault)")),
+		mcp.WithBoolean("interactive", mcp.Description("Wait for approval at each phase (default: false)")),
 	)
 }
 
@@ -681,10 +681,10 @@ func createProjectTool() mcp.Tool {
 func queryContextTool() mcp.Tool {
 	return mcp.NewTool(
 		"query_context",
-		mcp.WithDescription("Query relevant context for a task. Returns ranked memories and completed task results. Use this to load dynamic context at boot or before starting work."),
+		mcp.WithDescription("Query relevant memories and task results for context loading."),
 		asParam,
 		projectParam,
-		mcp.WithString("query", mcp.Description("What context do you need? (e.g. 'supabase migration patterns')"), mcp.Required()),
+		mcp.WithString("query", mcp.Description("Context query"), mcp.Required()),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 10)")),
 	)
 }
@@ -694,10 +694,10 @@ func queryContextTool() mcp.Tool {
 func getSessionContextTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_session_context",
-		mcp.WithDescription("Get everything an agent needs in one call: profile, pending tasks, unread messages, active conversations, and relevant memories. Use this at boot instead of making 5-8 separate calls."),
+		mcp.WithDescription("Boot context: profile, tasks, unread messages (index), conversations, memories (index). One call replaces 5-8."),
 		asParam,
 		projectParam,
-		mcp.WithString("profile_slug", mcp.Description("Profile slug to load context for (optional, auto-detected from agent registration)")),
+		mcp.WithString("profile_slug", mcp.Description("Profile slug (auto-detected if omitted)")),
 	)
 }
 
@@ -706,7 +706,7 @@ func getSessionContextTool() mcp.Tool {
 func createOrgTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_org",
-		mcp.WithDescription("Create an organization. Orgs group teams across projects."),
+		mcp.WithDescription("Create an organization (groups teams)."),
 		asParam,
 		projectParam,
 		mcp.WithString("name", mcp.Description("Organization name"), mcp.Required()),
@@ -727,22 +727,22 @@ func listOrgsTool() mcp.Tool {
 func createTeamTool() mcp.Tool {
 	return mcp.NewTool(
 		"create_team",
-		mcp.WithDescription("Create a team within a project. Teams control messaging permissions and group agents. Types: 'regular' (default), 'admin' (unrestricted broadcast), 'bot'."),
+		mcp.WithDescription("Create a team (controls messaging permissions). Types: regular, admin (broadcast), bot."),
 		asParam,
 		projectParam,
 		mcp.WithString("name", mcp.Description("Team name"), mcp.Required()),
-		mcp.WithString("slug", mcp.Description("Unique team slug within the project (e.g. 'frontend', 'comex')"), mcp.Required()),
+		mcp.WithString("slug", mcp.Description("Team slug (unique per project)"), mcp.Required()),
 		mcp.WithString("description", mcp.Description("Team description")),
-		mcp.WithString("type", mcp.Description("Team type: 'regular' (default), 'admin' (unrestricted messaging), 'bot'")),
-		mcp.WithString("org_id", mcp.Description("Organization ID (optional)")),
-		mcp.WithString("parent_team_id", mcp.Description("Parent team ID for nested team hierarchy (optional)")),
+		mcp.WithString("type", mcp.Description("regular (default) / admin / bot")),
+		mcp.WithString("org_id", mcp.Description("Organization ID")),
+		mcp.WithString("parent_team_id", mcp.Description("Parent team ID")),
 	)
 }
 
 func listTeamsTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_teams",
-		mcp.WithDescription("List all teams in a project with their members."),
+		mcp.WithDescription("List teams with members."),
 		asParam,
 		projectParam,
 	)
@@ -751,19 +751,19 @@ func listTeamsTool() mcp.Tool {
 func addTeamMemberTool() mcp.Tool {
 	return mcp.NewTool(
 		"add_team_member",
-		mcp.WithDescription("Add an agent to a team. Roles: 'admin', 'lead', 'member' (default), 'observer'."),
+		mcp.WithDescription("Add agent to team."),
 		asParam,
 		projectParam,
 		mcp.WithString("team", mcp.Description("Team slug"), mcp.Required()),
 		mcp.WithString("agent_name", mcp.Description("Agent name to add"), mcp.Required()),
-		mcp.WithString("role", mcp.Description("Role in team: 'admin', 'lead', 'member' (default), 'observer'")),
+		mcp.WithString("role", mcp.Description("admin / lead / member (default) / observer")),
 	)
 }
 
 func removeTeamMemberTool() mcp.Tool {
 	return mcp.NewTool(
 		"remove_team_member",
-		mcp.WithDescription("Remove an agent from a team (soft remove with left_at timestamp)."),
+		mcp.WithDescription("Remove agent from team."),
 		asParam,
 		projectParam,
 		mcp.WithString("team", mcp.Description("Team slug"), mcp.Required()),
@@ -774,7 +774,7 @@ func removeTeamMemberTool() mcp.Tool {
 func getTeamInboxTool() mcp.Tool {
 	return mcp.NewTool(
 		"get_team_inbox",
-		mcp.WithDescription("Get messages sent to a team (via to='team:slug' addressing)."),
+		mcp.WithDescription("Get team inbox messages."),
 		asParam,
 		projectParam,
 		mcp.WithString("team", mcp.Description("Team slug"), mcp.Required()),
@@ -785,9 +785,9 @@ func getTeamInboxTool() mcp.Tool {
 func addNotifyChannelTool() mcp.Tool {
 	return mcp.NewTool(
 		"add_notify_channel",
-		mcp.WithDescription("Add a notify channel — allows this agent to message the target agent even outside team boundaries."),
+		mcp.WithDescription("Allow messaging target agent outside team boundaries."),
 		asParam,
 		projectParam,
-		mcp.WithString("target", mcp.Description("Target agent name to allow messaging to"), mcp.Required()),
+		mcp.WithString("target", mcp.Description("Target agent name"), mcp.Required()),
 	)
 }
