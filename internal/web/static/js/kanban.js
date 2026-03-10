@@ -300,6 +300,30 @@ const KANBAN_STYLES = `
 .kb-agent {
   color: #00e676;
 }
+.kb-card-checklist {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.kb-card-cl-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.kb-card-cl-fill {
+  height: 100%;
+  background: #00e676;
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+.kb-card-cl-text {
+  font: 9px 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,0.35);
+  white-space: nowrap;
+}
 .kb-card-actions {
   position: absolute;
   bottom: 6px;
@@ -445,6 +469,21 @@ const KANBAN_STYLES = `
 .kb-field textarea {
   resize: vertical;
   min-height: 200px;
+}
+.kb-field-row {
+  display: flex;
+  gap: 12px;
+}
+.kb-field-row .kb-field {
+  flex: 1;
+}
+.kb-field--meta {
+  display: flex;
+  gap: 16px;
+  font: 9px 'JetBrains Mono', monospace;
+  color: rgba(99,110,114,0.6);
+  padding-top: 4px;
+  border-top: 1px solid rgba(108,92,231,0.1);
 }
 
 /* ── Checklist ── */
@@ -762,27 +801,59 @@ export class KanbanBoard {
 
   /* ─── Public API ─── */
 
+  /** Fast fingerprint — only fields that affect visual display. */
+  _fingerprint(arr) {
+    let h = 0;
+    for (const item of arr) {
+      const s = item.id + '|' + (item.status || '') + '|' + (item.title || '') + '|' +
+        (item.priority || '') + '|' + (item.assigned_to || '') + '|' + (item.board_id || '') +
+        '|' + (item.goal_id || '') + '|' + (item.description || '');
+      for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return h;
+  }
+
   setTasks(tasks) {
-    this.tasks = tasks || [];
-    // Don't re-render while user is interacting with a form
+    const incoming = tasks || [];
+    const fp = this._fingerprint(incoming);
+    if (fp === this._tasksFP && incoming.length === this.tasks.length) return;
+    this.tasks = incoming;
+    this._tasksFP = fp;
     if (this._overlay) return;
-    this._render();
+    this._scheduleRender();
   }
 
   setBoards(boards) {
-    this.boards = boards || [];
+    const incoming = boards || [];
+    const fp = this._fingerprint(incoming);
+    if (fp === this._boardsFP && incoming.length === this.boards.length) return;
+    this.boards = incoming;
+    this._boardsFP = fp;
     if (this._overlay) return;
-    this._render();
+    this._scheduleRender();
   }
 
   setGoals(goals) {
-    this.goals = goals || [];
+    const incoming = goals || [];
+    const fp = this._fingerprint(incoming);
+    if (fp === this._goalsFP && incoming.length === this.goals.length) return;
+    this.goals = incoming;
+    this._goalsFP = fp;
     this.goalMap.clear();
     for (const g of this.goals) {
       this.goalMap.set(g.id, g);
     }
     if (this._overlay) return;
-    this._render();
+    this._scheduleRender();
+  }
+
+  /** Debounced render — coalesces rapid updates into a single rAF paint. */
+  _scheduleRender() {
+    if (this._renderRAF) return;
+    this._renderRAF = requestAnimationFrame(() => {
+      this._renderRAF = null;
+      this._render();
+    });
   }
 
   show() {
@@ -812,18 +883,128 @@ export class KanbanBoard {
   /* ─── Rendering ─── */
 
   _render() {
-    // Save scroll positions of columns before nuke
-    const scrollPositions = {};
-    this.root.querySelectorAll('.kb-col-body').forEach(body => {
-      const status = body.parentElement?.dataset?.status;
-      if (status && body.scrollTop > 0) scrollPositions[status] = body.scrollTop;
+    // First render — build from scratch
+    if (!this.root.querySelector('.kb-header')) {
+      this._fullRender();
+      return;
+    }
+    // Subsequent renders — patch in place (no DOM nuke, no flash)
+    this._patchRender();
+  }
+
+  _fullRender() {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(this._buildHeader());
+
+    const board = document.createElement('div');
+    board.className = 'kb-board';
+    const { visibleStatuses, groups } = this._getFilteredGroups();
+    for (const status of visibleStatuses) {
+      board.appendChild(this._renderColumn(status, groups[status] || []));
+    }
+    frag.appendChild(board);
+    this.root.replaceChildren(frag);
+  }
+
+  _patchRender() {
+    // Update header tabs active state
+    this.root.querySelectorAll('.kb-tab').forEach(tab => {
+      const isAll = tab.textContent === 'ALL';
+      const board = this.boards.find(b => b.name.toUpperCase() === tab.textContent);
+      if (isAll) tab.classList.toggle('kb-tab--active', this.selectedBoard === null);
+      else if (board) tab.classList.toggle('kb-tab--active', this.selectedBoard === board.id);
     });
-    // Save root scroll position
-    const rootScroll = this.root.scrollTop;
 
-    this.root.innerHTML = '';
+    const { visibleStatuses, groups } = this._getFilteredGroups();
+    const boardEl = this.root.querySelector('.kb-board');
+    if (!boardEl) { this._fullRender(); return; }
 
-    // Header
+    // Sync columns: add/remove as needed
+    const existingCols = boardEl.querySelectorAll('.kb-col');
+    const existingStatuses = Array.from(existingCols).map(c => c.dataset.status);
+
+    // If column structure changed, do a targeted board rebuild only (not the header)
+    if (existingStatuses.join(',') !== visibleStatuses.join(',')) {
+      const newBoard = document.createElement('div');
+      newBoard.className = 'kb-board';
+      for (const status of visibleStatuses) {
+        newBoard.appendChild(this._renderColumn(status, groups[status] || []));
+      }
+      boardEl.replaceWith(newBoard);
+      return;
+    }
+
+    // Patch each column in-place
+    for (const col of existingCols) {
+      const status = col.dataset.status;
+      const tasks = groups[status] || [];
+      const prioOrder = { P0: 0, P1: 1, P2: 2, P3: 3 };
+      tasks.sort((a, b) => (prioOrder[a.priority] ?? 9) - (prioOrder[b.priority] ?? 9));
+
+      // Update count badge
+      const countEl = col.querySelector('.kb-col-count');
+      if (countEl) countEl.textContent = tasks.length;
+
+      const body = col.querySelector('.kb-col-body');
+      if (!body) continue;
+
+      const savedScroll = body.scrollTop;
+
+      // Build map of existing cards
+      const existingCards = new Map();
+      body.querySelectorAll('.kb-card').forEach(card => {
+        existingCards.set(card.dataset.taskId, card);
+      });
+
+      // Build new card list
+      const newTaskIds = tasks.map(t => String(t.id));
+      const existingIds = Array.from(existingCards.keys());
+
+      // If same tasks in same order, just update content of changed cards
+      if (newTaskIds.join(',') === existingIds.join(',')) {
+        for (const task of tasks) {
+          const existing = existingCards.get(String(task.id));
+          if (existing) {
+            // Check if card content needs update
+            const titleEl = existing.querySelector('.kb-card-title');
+            const assignEl = existing.querySelector('.kb-card-assign');
+            if (titleEl && titleEl.textContent !== task.title) titleEl.textContent = task.title;
+            if (assignEl) {
+              const expected = task.assigned_to || '—';
+              if (assignEl.textContent !== expected) assignEl.textContent = expected;
+            }
+          }
+        }
+      } else {
+        // Cards changed — rebuild body content only
+        const emptyEl = body.querySelector('.kb-col-empty');
+        if (tasks.length === 0) {
+          // Clear cards, show empty
+          body.querySelectorAll('.kb-card').forEach(c => c.remove());
+          if (!emptyEl) {
+            const empty = document.createElement('div');
+            empty.className = 'kb-col-empty';
+            empty.textContent = '—';
+            body.appendChild(empty);
+          }
+        } else {
+          if (emptyEl) emptyEl.remove();
+          // Rebuild cards using fragment
+          const cardFrag = document.createDocumentFragment();
+          for (const task of tasks) {
+            cardFrag.appendChild(this._renderCard(task));
+          }
+          // Remove old cards, add new
+          body.querySelectorAll('.kb-card').forEach(c => c.remove());
+          body.appendChild(cardFrag);
+        }
+      }
+
+      body.scrollTop = savedScroll;
+    }
+  }
+
+  _buildHeader() {
     const header = document.createElement('div');
     header.className = 'kb-header';
 
@@ -831,7 +1012,6 @@ export class KanbanBoard {
     titleArea.style.cssText = 'display:flex;align-items:center;gap:12px';
     titleArea.innerHTML = `<h2>Task Board</h2>`;
 
-    // Board tabs
     if (this.boards.length > 0) {
       const tabs = document.createElement('div');
       tabs.style.cssText = 'display:flex;gap:4px;align-items:center';
@@ -853,10 +1033,8 @@ export class KanbanBoard {
       titleArea.appendChild(tabs);
     }
 
-
     header.appendChild(titleArea);
 
-    // Controls: hide-done checkbox + add button
     const controls = document.createElement('div');
     controls.style.cssText = 'display:flex;align-items:center;gap:10px';
 
@@ -866,9 +1044,9 @@ export class KanbanBoard {
     doneCheck.type = 'checkbox';
     doneCheck.checked = this.showDone;
     doneCheck.style.cssText = 'accent-color:#6c5ce7;cursor:pointer';
-    doneCheck.addEventListener('change', () => { this.showDone = doneCheck.checked; this._render(); });
+    doneCheck.addEventListener('change', () => { this.showDone = doneCheck.checked; this._fullRender(); });
     doneLabel.appendChild(doneCheck);
-    doneLabel.appendChild(document.createTextNode('Done'));
+    doneLabel.appendChild(document.createTextNode('Done / Cancelled'));
     controls.appendChild(doneLabel);
 
     const addBtn = document.createElement('button');
@@ -879,9 +1057,10 @@ export class KanbanBoard {
     controls.appendChild(addBtn);
 
     header.appendChild(controls);
-    this.root.appendChild(header);
+    return header;
+  }
 
-    // Filter tasks
+  _getFilteredGroups() {
     let filtered = this.tasks;
     if (this.selectedBoard !== null) {
       filtered = filtered.filter(t => t.board_id === this.selectedBoard);
@@ -890,35 +1069,16 @@ export class KanbanBoard {
       filtered = filtered.filter(t => t.goal_id === this.selectedGoal);
     }
     if (!this.showDone) {
-      filtered = filtered.filter(t => t.status !== 'done');
+      filtered = filtered.filter(t => t.status !== 'done' && t.status !== 'cancelled');
     }
-
-    // Columns to show
-    const visibleStatuses = this.showDone ? STATUS_ORDER : STATUS_ORDER.filter(s => s !== 'done');
-
-    // Group tasks by status
+    const visibleStatuses = this.showDone ? STATUS_ORDER : STATUS_ORDER.filter(s => s !== 'done' && s !== 'cancelled');
     const groups = {};
     for (const t of filtered) {
       const s = t.status || 'pending';
       if (!groups[s]) groups[s] = [];
       groups[s].push(t);
     }
-
-    const board = document.createElement('div');
-    board.className = 'kb-board';
-
-    for (const status of visibleStatuses) {
-      board.appendChild(this._renderColumn(status, groups[status] || []));
-    }
-
-    this.root.appendChild(board);
-
-    // Restore scroll positions
-    this.root.scrollTop = rootScroll;
-    this.root.querySelectorAll('.kb-col-body').forEach(body => {
-      const status = body.parentElement?.dataset?.status;
-      if (status && scrollPositions[status]) body.scrollTop = scrollPositions[status];
-    });
+    return { visibleStatuses, groups };
   }
 
   _renderColumn(status, tasks) {
@@ -1046,6 +1206,21 @@ export class KanbanBoard {
     }
     card.appendChild(meta);
 
+    // Checklist mini progress (if description has checklist items)
+    const parsed = this._parseChecklist(task.description || '');
+    if (parsed.items.length > 0) {
+      const done = parsed.items.filter(i => i.checked).length;
+      const total = parsed.items.length;
+      const pct = Math.round((done / total) * 100);
+      const clWrap = document.createElement('div');
+      clWrap.className = 'kb-card-checklist';
+      clWrap.innerHTML = `
+        <div class="kb-card-cl-bar"><div class="kb-card-cl-fill" style="width:${pct}%"></div></div>
+        <span class="kb-card-cl-text">${done}/${total}</span>
+      `;
+      card.appendChild(clWrap);
+    }
+
     // Action buttons (visible on hover)
     const actions = document.createElement('div');
     actions.className = 'kb-card-actions';
@@ -1082,16 +1257,11 @@ export class KanbanBoard {
       this._showCtxMenu(e.clientX, e.clientY, task);
     });
 
-    // Click to expand detail
+    // Click to open detail popup (Trello-style)
     card.addEventListener('click', (e) => {
       if (e.target.closest('.kb-action-btn')) return;
-      this._toggleDetail(card, task);
+      this._showEditForm(task);
     });
-
-    // If this card is expanded, show detail
-    if (this.expandedCard === task.id) {
-      card.appendChild(this._buildDetail(task));
-    }
 
     return card;
   }
@@ -1473,11 +1643,17 @@ export class KanbanBoard {
     const parsed = this._parseChecklist(task.description || '');
     const editChecklistItems = [...parsed.items];
 
+    const statusOptions = ['pending', 'accepted', 'in-progress', 'done', 'blocked', 'cancelled'];
+
     form.innerHTML = `
       <h3>Edit Task</h3>
       <div class="kb-field">
         <label>Title</label>
         <input type="text" name="title" value="${esc(task.title)}" autocomplete="off" />
+      </div>
+      <div class="kb-field">
+        <label>Assigned To</label>
+        <input type="text" name="assigned_to" value="${esc(task.assigned_to || '')}" placeholder="profile-slug" autocomplete="off" />
       </div>
       <div class="kb-field">
         <label>Description</label>
@@ -1487,14 +1663,40 @@ export class KanbanBoard {
         <label>Checklist</label>
         <div class="kb-checklist-container"></div>
       </div>
+      <div class="kb-field-row">
+        <div class="kb-field">
+          <label>Priority</label>
+          <select name="priority">
+            <option value="P0"${task.priority === 'P0' ? ' selected' : ''}>P0 - Critical</option>
+            <option value="P1"${task.priority === 'P1' ? ' selected' : ''}>P1 - High</option>
+            <option value="P2"${task.priority === 'P2' ? ' selected' : ''}>P2 - Normal</option>
+            <option value="P3"${task.priority === 'P3' ? ' selected' : ''}>P3 - Low</option>
+          </select>
+        </div>
+        <div class="kb-field">
+          <label>Status</label>
+          <select name="status">
+            ${statusOptions.map(s => `<option value="${s}"${task.status === s ? ' selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+      </div>
       <div class="kb-field">
-        <label>Priority</label>
-        <select name="priority">
-          <option value="P0"${task.priority === 'P0' ? ' selected' : ''}>P0 - Critical</option>
-          <option value="P1"${task.priority === 'P1' ? ' selected' : ''}>P1 - High</option>
-          <option value="P2"${task.priority === 'P2' ? ' selected' : ''}>P2 - Normal</option>
-          <option value="P3"${task.priority === 'P3' ? ' selected' : ''}>P3 - Low</option>
+        <label>Goal (optional)</label>
+        <select name="goal_id">
+          <option value="">— None —</option>
+          ${this.goals.map(g => `<option value="${esc(g.id)}"${task.goal_id === g.id ? ' selected' : ''}>[${esc(g.type)}] ${esc(g.title)}</option>`).join('')}
         </select>
+      </div>
+      <div class="kb-field">
+        <label>Board (optional)</label>
+        <select name="board_id">
+          <option value="">— Default —</option>
+          ${this.boards.map(b => `<option value="${esc(b.id)}"${task.board_id === b.id ? ' selected' : ''}>${esc(b.title)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="kb-field kb-field--meta">
+        <span>ID: ${esc(task.id.slice(0, 8))}...</span>
+        <span>Created: ${task.dispatched_at ? new Date(task.dispatched_at).toLocaleDateString() : '—'}</span>
       </div>
       <div class="kb-form-btns">
         <button class="kb-form-btn kb-form-btn--cancel" type="button">Cancel</button>
@@ -1522,8 +1724,15 @@ export class KanbanBoard {
       const rawDesc = form.querySelector('[name="description"]').value.trim();
       const description = this._serializeDescription(rawDesc, editChecklistItems);
       const priority = form.querySelector('[name="priority"]').value;
+      const status = form.querySelector('[name="status"]').value;
+      const goalId = form.querySelector('[name="goal_id"]').value;
+      const boardId = form.querySelector('[name="board_id"]').value;
       if (!title) return;
-      if (this.onEdit) this.onEdit(task.id, task.project || 'default', { title, description, priority });
+      const data = { title, description, priority };
+      if (status) data.status = status;
+      if (goalId) data.goal_id = goalId;
+      if (boardId) data.board_id = boardId;
+      if (this.onEdit) this.onEdit(task.id, task.project || 'default', data);
       this._closeDispatchForm();
     });
 

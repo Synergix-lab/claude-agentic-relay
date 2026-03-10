@@ -286,38 +286,53 @@ function layoutAgents() {
         size: planetSize(agentCount),
       });
     } else {
-      // Wide orbits that stay in canvas — 0.40 of viewport
-      // Sort by agent count so bigger planets orbit further out
+      // Distribute planets across 2-3 distinct orbital rings
+      // Sort by agent count — biggest planets on OUTER ring (more space)
       const sorted = [...projectList].sort((a, b) => {
         const ac = a.agent_count || (projectGroups.get(a.name) || new Set()).size;
         const bc = b.agent_count || (projectGroups.get(b.name) || new Set()).size;
-        return ac - bc;
+        return ac - bc; // smallest first → inner ring, biggest → outer
       });
-      const outerRadius = Math.min(engine.width, engine.height) * 0.40;
-      for (let i = 0; i < sorted.length; i++) {
-        const p = sorted[i];
-        const agentCount = p.agent_count || (projectGroups.get(p.name) || new Set()).size;
-        const existing = existingByName.get(p.name);
+      const outerRadius = Math.min(engine.width, engine.height) * 0.36;
+      const n = sorted.length;
+      // Split into rings: up to 5 per ring
+      const maxPerRing = Math.max(4, Math.ceil(n / 3));
+      const rings = [];
+      for (let i = 0; i < n; i += maxPerRing) {
+        rings.push(sorted.slice(i, i + maxPerRing));
+      }
+      // Well-spaced radii with room for asteroid belt between
+      const ringRadii = rings.length === 1
+        ? [0.65]
+        : rings.length === 2
+        ? [0.45, 0.82]  // asteroid belt at ~0.63
+        : [0.38, 0.62, 0.88]; // asteroid belt between ring 1 & 2
 
-        const ratio = sorted.length <= 2 ? 0.55
-          : 0.55 + 0.45 * (i / Math.max(sorted.length - 1, 1));
-        const orbitR = outerRadius * ratio;
-        const startAngle = -Math.PI / 2 + (i / sorted.length) * Math.PI * 2;
-        const speed = 0.03 / Math.sqrt(ratio);
+      for (let r = 0; r < rings.length; r++) {
+        const ring = rings[r];
+        const orbitR = outerRadius * ringRadii[r];
+        const speed = 0.025 / Math.sqrt(ringRadii[r]);
+        // Golden angle offset per ring so rings don't align
+        const ringOffset = r * 0.85;
+        for (let j = 0; j < ring.length; j++) {
+          const p = ring[j];
+          const agentCount = p.agent_count || (projectGroups.get(p.name) || new Set()).size;
+          const existing = existingByName.get(p.name);
+          const startAngle = ringOffset + (j / ring.length) * Math.PI * 2;
+          const angle = existing ? existing.angle : startAngle;
 
-        const angle = existing ? existing.angle : startAngle;
-
-        projectPlanets.push({
-          project: p.name,
-          planetType: p.planet_type || "terran/1",
-          orbitRadius: orbitR,
-          angle,
-          speed,
-          cx: cx + Math.cos(angle) * orbitR,
-          cy: cy + Math.sin(angle) * orbitR,
-          agentCount,
-          size: planetSize(agentCount),
-        });
+          projectPlanets.push({
+            project: p.name,
+            planetType: p.planet_type || "terran/1",
+            orbitRadius: orbitR,
+            angle,
+            speed: speed * (0.9 + Math.random() * 0.2), // slight speed variation
+            cx: cx + Math.cos(angle) * orbitR,
+            cy: cy + Math.sin(angle) * orbitR,
+            agentCount,
+            size: planetSize(agentCount),
+          });
+        }
       }
     }
 
@@ -326,11 +341,13 @@ function layoutAgents() {
     world.clusters = [];
     world.colony = null;
 
+
     // Pre-populate project stats for progress bars
     for (const p of projectsData) {
       world._projectStats[p.name] = {
         total: p.agent_count, online: p.online_count,
         tasks: p.total_tasks, active: p.active_tasks, done: p.done_tasks,
+        tokens_24h: p.tokens_24h || 0,
       };
     }
 
@@ -519,6 +536,14 @@ function onActivity(sessions, sseAgents) {
 
   // Ghost sprites disabled — only registered agents appear on canvas
 }
+
+const ACTIVITY_GLOW = {
+  reading: "#74b9ff",
+  writing: "#a29bfe",
+  thinking: "#ffd93d",
+  tool_use: "#55efc4",
+  executing: "#fd79a8",
+};
 
 function applyActivity(av, s) {
   const prevActivity = av.activity;
@@ -1303,6 +1328,9 @@ function openDetail(av) {
     });
   }
 
+  // Token usage
+  updateAgentTokenDetail(av.project, av.name);
+
   // Nav label
   const keys = getAgentKeys();
   const currentIdx = keys.indexOf(focusedAgent);
@@ -1597,14 +1625,16 @@ function openDysonPicker() {
   assetPicker.classList.remove("hidden");
 }
 
-// Load dyson_type from settings on init
-(async () => {
-  const settings = await client.fetchSettings();
-  if (settings.dyson_type && settings.dyson_type !== "auto") {
-    currentDysonType = settings.dyson_type;
-    world._dysonType = currentDysonType;
-  }
-})();
+// Load dyson_type from settings on init (deferred until client is ready)
+function _loadDysonSettings() {
+  if (typeof client === "undefined" || !client) return;
+  client.fetchSettings().then(settings => {
+    if (settings && settings.dyson_type && settings.dyson_type !== "auto") {
+      currentDysonType = settings.dyson_type;
+      world._dysonType = currentDysonType;
+    }
+  }).catch(() => {});
+}
 
 function openPlanetPicker(projectName) {
   const projInfo = projectsData.find(p => p.name === projectName);
@@ -1760,6 +1790,7 @@ tabMessages.addEventListener("click", () => {
   messagesPanel.classList.remove("hidden");
   memoriesPanel.classList.add("hidden");
   tasksPanel.classList.add("hidden");
+  if (currentMode === "kanban" || currentMode === "vault") setMode("canvas");
 });
 
 tabMemories.addEventListener("click", () => {
@@ -1770,6 +1801,7 @@ tabMemories.addEventListener("click", () => {
   memoriesPanel.classList.remove("hidden");
   messagesPanel.classList.add("hidden");
   tasksPanel.classList.add("hidden");
+  if (currentMode === "kanban" || currentMode === "vault") setMode("canvas");
   loadMemories();
 });
 
@@ -1789,6 +1821,7 @@ tabTasks.addEventListener("click", () => {
   tasksPanel.classList.remove("hidden");
   messagesPanel.classList.add("hidden");
   memoriesPanel.classList.add("hidden");
+  if (currentMode === "kanban" || currentMode === "vault") setMode("canvas");
   loadTasks();
 });
 
@@ -2327,24 +2360,34 @@ function setMode(mode) {
   currentMode = mode;
   const main = document.getElementById("main");
   main.classList.remove("mode-canvas", "mode-detail", "mode-kanban", "mode-vault");
-  main.classList.add(`mode-${mode}`);
 
   // Update header mode buttons
   document.querySelectorAll(".mode-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
 
-  // Show/hide kanban
+  // Show/hide kanban — fetch + render BEFORE making panel visible
   if (mode === "kanban") {
-    kanbanBoard.show();
-    Promise.all([client.fetchAllTasks(), client.fetchAllBoards(), client.fetchAllGoals()]).then(([tasks, boards, goals]) => {
+    const boardsFetch = focusedProject ? client.fetchBoards(focusedProject) : client.fetchAllBoards();
+    Promise.all([client.fetchAllTasks(), boardsFetch, client.fetchAllGoals()]).then(([tasks, boards, goals]) => {
       allTasks = tasks;
-      kanbanBoard.setBoards(boards);
-      kanbanBoard.setGoals(goals);
-      kanbanBoard.setTasks(getViewFilteredTasks());
+      // Batch data + set fingerprints to prevent redundant re-renders from polling
+      kanbanBoard.boards = boards || [];
+      kanbanBoard._boardsFP = kanbanBoard._fingerprint(kanbanBoard.boards);
+      kanbanBoard.goals = goals || [];
+      kanbanBoard._goalsFP = kanbanBoard._fingerprint(kanbanBoard.goals);
+      kanbanBoard.goalMap.clear();
+      for (const g of kanbanBoard.goals) kanbanBoard.goalMap.set(g.id, g);
+      kanbanBoard.tasks = getViewFilteredTasks();
+      kanbanBoard._tasksFP = kanbanBoard._fingerprint(kanbanBoard.tasks);
+      // Single full render, then show
+      kanbanBoard._fullRender();
+      main.classList.add("mode-kanban");
+      kanbanBoard.show();
       taskCountEl.textContent = allTasks.filter(t => t.status !== "done").length;
     });
   } else {
+    main.classList.add(`mode-${mode}`);
     kanbanBoard.hide();
   }
 
@@ -2383,6 +2426,60 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
 
 const backGalaxyBtn = document.getElementById("back-galaxy");
 const colonyProjectNameEl = document.getElementById("colony-project-name");
+const colonyTokenValueEl = document.getElementById("colony-token-value");
+const colonyTokenCallsEl = document.getElementById("colony-token-calls");
+let _tokenPeriod = "24h";
+
+function formatTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return String(n);
+}
+
+// Render an SVG sparkline into an <svg> element from time-series data
+function renderSparkline(svgEl, buckets) {
+  if (!svgEl || !buckets || buckets.length === 0) {
+    if (svgEl) svgEl.innerHTML = "";
+    return;
+  }
+  const vb = svgEl.viewBox.baseVal;
+  const W = vb.width, H = vb.height;
+  const pad = 2;
+  const values = buckets.map(b => b.tokens);
+  const max = Math.max(...values, 1);
+  const n = values.length;
+
+  const pts = values.map((v, i) => {
+    const x = pad + (i / Math.max(n - 1, 1)) * (W - 2 * pad);
+    const y = H - pad - (v / max) * (H - 2 * pad);
+    return { x, y };
+  });
+
+  const lineD = pts.map((p, i) => (i === 0 ? "M" : "L") + p.x.toFixed(1) + "," + p.y.toFixed(1)).join(" ");
+  const areaD = lineD + ` L${pts[pts.length - 1].x.toFixed(1)},${H} L${pts[0].x.toFixed(1)},${H} Z`;
+  const last = pts[pts.length - 1];
+
+  svgEl.innerHTML = `
+    <path class="spark-area" d="${areaD}"/>
+    <path class="spark-line" d="${lineD}"/>
+    <circle class="spark-dot" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="2"/>
+  `;
+}
+
+// Period pills
+const pillsContainer = document.getElementById("token-period-pills");
+if (pillsContainer) {
+  pillsContainer.addEventListener("click", (e) => {
+    const pill = e.target.closest(".token-pill");
+    if (!pill) return;
+    pillsContainer.querySelectorAll(".token-pill").forEach(p => p.classList.remove("active"));
+    pill.classList.add("active");
+    _tokenPeriod = pill.dataset.period;
+    _tokenCurrent = { tokens: 0, calls: 0 };
+    _tokenTarget = { tokens: 0, calls: 0 };
+    if (colonyProject) startTokenPolling(colonyProject);
+  });
+}
 
 let _zoomAnimating = false;
 
@@ -2502,6 +2599,8 @@ function setViewMode(mode, project) {
     detailPanel.classList.remove("open");
     setMode("canvas");
     if (questTracker) questTracker.classList.add("hidden");
+    stopTokenPolling();
+    startGalaxyTokenPolling();
     // Defer layout to after DOM reflow so engine.width reflects new container size
     requestAnimationFrame(() => { engine.resize(); layoutAgents(); updateHierarchyLinks(); });
   } else if (mode === "colony" && project) {
@@ -2515,6 +2614,168 @@ function setViewMode(mode, project) {
     loadMessages();
     if (activeTab === "tasks") renderTasks();
     updateQuestTracker();
+    // Reset counters and start live polling
+    stopGalaxyTokenPolling();
+    _tokenCurrent = { tokens: 0, calls: 0 };
+    _tokenTarget = { tokens: 0, calls: 0 };
+    startTokenPolling(project);
+  }
+}
+
+// Real-time token counter with counting animation
+let _tokenCurrent = { tokens: 0, calls: 0 };
+let _tokenTarget = { tokens: 0, calls: 0 };
+let _tokenAnimFrame = null;
+let _tokenPollTimer = null;
+
+function animateTokenCounter() {
+  let changed = false;
+  // Animate tokens
+  if (_tokenCurrent.tokens !== _tokenTarget.tokens) {
+    const diff = _tokenTarget.tokens - _tokenCurrent.tokens;
+    const step = Math.max(1, Math.abs(Math.ceil(diff / 12)));
+    if (Math.abs(diff) <= step) {
+      _tokenCurrent.tokens = _tokenTarget.tokens;
+    } else {
+      _tokenCurrent.tokens += diff > 0 ? step : -step;
+    }
+    changed = true;
+  }
+  // Animate calls
+  if (_tokenCurrent.calls !== _tokenTarget.calls) {
+    const diff = _tokenTarget.calls - _tokenCurrent.calls;
+    const step = Math.max(1, Math.abs(Math.ceil(diff / 8)));
+    if (Math.abs(diff) <= step) {
+      _tokenCurrent.calls = _tokenTarget.calls;
+    } else {
+      _tokenCurrent.calls += diff > 0 ? step : -step;
+    }
+    changed = true;
+  }
+  // Update DOM
+  if (colonyTokenValueEl) {
+    colonyTokenValueEl.textContent = formatTokens(_tokenCurrent.tokens);
+    colonyTokenValueEl.classList.toggle("ticking", changed);
+  }
+  if (colonyTokenCallsEl) {
+    colonyTokenCallsEl.textContent = String(_tokenCurrent.calls);
+    colonyTokenCallsEl.classList.toggle("ticking", changed);
+  }
+  // Continue animation if not done
+  if (changed) {
+    _tokenAnimFrame = requestAnimationFrame(animateTokenCounter);
+  } else {
+    _tokenAnimFrame = null;
+  }
+}
+
+async function updateColonyTokenSummary(project) {
+  if (!colonyTokenValueEl || !project) return;
+  try {
+    const data = await client.fetchTokenUsageByProject(project, _tokenPeriod);
+    if (!Array.isArray(data)) return;
+    _tokenTarget.tokens = data.reduce((sum, d) => sum + (d.tokens || 0), 0);
+    _tokenTarget.calls = data.reduce((sum, d) => sum + (d.call_count || 0), 0);
+    // Start counting animation if not already running
+    if (!_tokenAnimFrame) {
+      _tokenAnimFrame = requestAnimationFrame(animateTokenCounter);
+    }
+  } catch (err) {
+    console.error("[token] colony summary error:", err);
+  }
+}
+
+function startTokenPolling(project) {
+  stopTokenPolling();
+  updateColonyTokenSummary(project);
+  _tokenPollTimer = setInterval(() => updateColonyTokenSummary(project), 5000);
+}
+
+function stopTokenPolling() {
+  if (_tokenPollTimer) { clearInterval(_tokenPollTimer); _tokenPollTimer = null; }
+  if (_tokenAnimFrame) { cancelAnimationFrame(_tokenAnimFrame); _tokenAnimFrame = null; }
+}
+
+// Galaxy-level token polling — updates planet badges in real-time
+let _galaxyTokenTimer = null;
+
+async function updateGalaxyTokens() {
+  if (viewMode !== "galaxy" || typeof client === "undefined" || !client) return;
+  try {
+    const data = await client.fetchTokenUsage("24h");
+    if (!Array.isArray(data) || !world._projectStats) return;
+    for (const d of data) {
+      if (world._projectStats[d.key]) {
+        world._projectStats[d.key].tokens_24h = d.tokens || 0;
+      }
+    }
+  } catch {}
+}
+
+function startGalaxyTokenPolling() {
+  stopGalaxyTokenPolling();
+  updateGalaxyTokens();
+  _galaxyTokenTimer = setInterval(updateGalaxyTokens, 5000);
+}
+
+function stopGalaxyTokenPolling() {
+  if (_galaxyTokenTimer) { clearInterval(_galaxyTokenTimer); _galaxyTokenTimer = null; }
+}
+
+// Populate token usage in agent detail panel
+async function updateAgentTokenDetail(project, agentName) {
+  const grid = document.getElementById("detail-token-grid");
+  const toolsList = document.getElementById("detail-token-tools");
+  const sparkSvg = document.getElementById("detail-sparkline");
+  if (!grid || !toolsList) return;
+
+  try {
+    const [data24h, data7d, timeSeries, projectTotal] = await Promise.all([
+      client.fetchTokenUsageByAgent(project, agentName, "24h"),
+      client.fetchTokenUsageByAgent(project, agentName, "7d"),
+      client.fetchTokenTimeSeries(project, "7d", agentName),
+      client.fetchTokenUsageByProject(project, "24h"),
+    ]);
+    const sum = (arr) => ({ tokens: arr.reduce((s, d) => s + d.tokens, 0), calls: arr.reduce((s, d) => s + d.call_count, 0) });
+    const s24 = sum(data24h);
+    const s7d = sum(data7d);
+    const projTotal24 = projectTotal.reduce((s, d) => s + d.tokens, 0);
+
+    // Sparkline (7d activity)
+    renderSparkline(sparkSvg, timeSeries);
+
+    if (s24.tokens === 0 && s7d.tokens === 0) {
+      grid.innerHTML = '<div style="color:rgba(224,224,232,0.3);font-size:9px;grid-column:1/-1;text-align:center;padding:8px">No token data yet</div>';
+      toolsList.innerHTML = "";
+      return;
+    }
+
+    // Derived stats
+    const avg24 = s24.calls > 0 ? Math.round(s24.tokens / s24.calls) : 0;
+    const pct = projTotal24 > 0 ? Math.round(s24.tokens / projTotal24 * 100) : 0;
+
+    grid.innerHTML = `
+      <div class="token-grid-cell tg-highlight"><span class="tg-value">${formatTokens(s24.tokens)}</span><span class="tg-label">tokens 24h</span></div>
+      <div class="token-grid-cell"><span class="tg-value">${formatTokens(s7d.tokens)}</span><span class="tg-label">tokens 7d</span></div>
+      <div class="token-grid-cell"><span class="tg-value">${s24.calls}</span><span class="tg-label">calls 24h</span></div>
+      <div class="token-grid-cell"><span class="tg-value">${s7d.calls}</span><span class="tg-label">calls 7d</span></div>
+      <div class="token-grid-cell"><span class="tg-value">${formatTokens(avg24)}</span><span class="tg-label">avg/call</span></div>
+      <div class="token-grid-cell"><span class="tg-value">${pct}%</span><span class="tg-label">of project</span></div>
+    `;
+
+    // Tool breakdown (top 8)
+    const maxTokens = data24h.length > 0 ? data24h[0].tokens : 1;
+    toolsList.innerHTML = data24h.slice(0, 8).map(d => `
+      <div class="token-tool-row">
+        <span class="token-tool-name" title="${d.key}">${d.key}</span>
+        <div class="token-tool-bar"><div class="token-tool-bar-fill" style="width:${Math.round(d.tokens / maxTokens * 100)}%"></div></div>
+        <span class="token-tool-count">${formatTokens(d.tokens)}</span>
+      </div>
+    `).join("");
+  } catch {
+    grid.innerHTML = "";
+    toolsList.innerHTML = "";
+    if (sparkSvg) sparkSvg.innerHTML = "";
   }
 }
 
@@ -2759,6 +3020,7 @@ client.onGoals = (goals) => {
     kanbanBoard.setGoals(goals);
   }
 };
+_loadDysonSettings();
 // Defer start to after first paint so canvas has correct dimensions
 requestAnimationFrame(() => {
   engine.resize();
@@ -2771,6 +3033,7 @@ requestAnimationFrame(() => {
   setInterval(fetchProjectsData, 10000);
   setInterval(() => { if (viewMode === "colony") updateQuestTracker(); }, 15000);
   setInterval(fetchFileLockData, 5000);
+  startGalaxyTokenPolling();
   console.log("[relay] polling started");
 });
 
