@@ -73,12 +73,20 @@ func (d *DB) DeleteProject(name string) error {
 	}
 	defer tx.Rollback()
 
+	// Disable FK checks during cascade delete to avoid ordering issues
+	tx.Exec("PRAGMA foreign_keys = OFF")
+
+	// Delete junction tables that lack a project column (linked via IDs)
+	tx.Exec("DELETE FROM conversation_members WHERE conversation_id IN (SELECT id FROM conversations WHERE project = ?)", name)
+	tx.Exec("DELETE FROM conversation_reads WHERE conversation_id IN (SELECT id FROM conversations WHERE project = ?)", name)
+	tx.Exec("DELETE FROM team_inbox WHERE team_id IN (SELECT id FROM teams WHERE project = ?)", name)
+	tx.Exec("DELETE FROM message_reads WHERE message_id IN (SELECT id FROM messages WHERE project = ?)", name)
+
 	// Delete all related data (tables with a project column)
 	tables := []string{
-		"agent_notify_channels", "team_members", "teams",
-		"goals", "boards", "vault_docs", "vaults",
-		"message_reads", "memories", "profiles",
-		"tasks", "conversations", "messages", "agents",
+		"deliveries", "agent_notify_channels", "team_members", "teams",
+		"goals", "boards", "vault_docs", "vaults", "file_locks",
+		"memories", "profiles", "tasks", "conversations", "messages", "agents",
 	}
 	for _, t := range tables {
 		if _, err := tx.Exec("DELETE FROM "+t+" WHERE project = ?", name); err != nil {
@@ -102,7 +110,11 @@ func (d *DB) DeleteProject(name string) error {
 		return fmt.Errorf("project %q not found", name)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	d.conn.Exec("PRAGMA foreign_keys = ON")
+	return nil
 }
 
 // ListProjectsWithInfo returns all projects with their planet_type and stats.
