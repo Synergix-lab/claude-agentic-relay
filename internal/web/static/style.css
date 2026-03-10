@@ -2944,3 +2944,83 @@ body.view-galaxy .quest-tracker { display: none !important; }
 .vault-detail-content tr:hover td {
   background: rgba(0, 255, 255, 0.02);
 }
+
+/* ── Token Widget (Colony Header) ── */
+.colony-token-widget {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255, 217, 61, 0.06);
+  border: 1px solid rgba(255, 217, 61, 0.15);
+  border-radius: 4px; padding: 2px 8px; margin-left: 4px;
+}
+.token-widget-icon {
+  color: #ffd93d; font-size: 8px; opacity: 0.6;
+  animation: token-pulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .token-widget-icon { animation: none; opacity: 0.6; } }
+@keyframes token-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
+.colony-token-value, .colony-token-calls {
+  font: bold 14px 'JetBrains Mono', monospace;
+  color: #ffd93d; letter-spacing: 1px;
+  min-width: 2ch; text-align: right;
+  transition: text-shadow 0.3s ease;
+}
+.colony-token-value.ticking, .colony-token-calls.ticking {
+  text-shadow: 0 0 8px rgba(255, 217, 61, 0.6);
+}
+.colony-token-unit {
+  font: 600 8px 'JetBrains Mono', monospace;
+  color: rgba(255, 217, 61, 0.4); text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.colony-token-sep {
+  color: rgba(255, 217, 61, 0.2); font-size: 10px; margin: 0 2px;
+}
+.token-period-pills { display: flex; gap: 1px; }
+.token-pill {
+  background: transparent; border: none; color: rgba(255,217,61,0.35);
+  font: 600 8px 'JetBrains Mono', monospace; padding: 2px 5px;
+  cursor: pointer; border-radius: 2px; transition: all 0.15s ease-out;
+}
+.token-pill:hover { color: rgba(255,217,61,0.7); background: rgba(255,217,61,0.08); }
+.token-pill.active { color: #ffd93d; background: rgba(255,217,61,0.15); }
+.view-galaxy .colony-token-widget { display: none; }
+
+/* ── Sparklines ── */
+.detail-sparkline {
+  width: 100%; height: 48px; margin-bottom: 8px;
+  background: rgba(255, 217, 61, 0.03);
+  border: 1px solid rgba(255, 217, 61, 0.08);
+  border-radius: 3px;
+}
+.detail-sparkline .spark-area {
+  fill: rgba(255, 217, 61, 0.1);
+}
+.detail-sparkline .spark-line {
+  fill: none; stroke: #ffd93d; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.detail-sparkline .spark-dot {
+  fill: #ffd93d;
+}
+.detail-sparkline .spark-grid {
+  stroke: rgba(255, 217, 61, 0.06); stroke-width: 0.5;
+}
+
+/* ── Token Grid (Agent Detail Panel) ── */
+.token-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.token-grid-cell {
+  background: rgba(255, 217, 61, 0.04);
+  border: 1px solid rgba(255, 217, 61, 0.1);
+  border-radius: 3px; padding: 6px 8px; text-align: center;
+}
+.token-grid-cell .tg-value { font: bold 13px 'JetBrains Mono', monospace; color: #ffd93d; display: block; }
+.token-grid-cell .tg-label { font-size: 8px; color: rgba(255,217,61,0.45); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.token-grid-cell.tg-highlight { background: rgba(255, 217, 61, 0.08); border-color: rgba(255, 217, 61, 0.2); }
+
+/* ── Token Tools Breakdown ── */
+.token-tools-list { display: flex; flex-direction: column; gap: 3px; }
+.token-tool-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.token-tool-name { font: 9px 'JetBrains Mono', monospace; color: rgba(224,224,232,0.6); width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.token-tool-bar { flex: 1; height: 3px; background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden; }
+.token-tool-bar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, rgba(255,217,61,0.3), rgba(255,217,61,0.6)); transition: width 0.3s ease-out; }
+.token-tool-count { font: 9px 'JetBrains Mono', monospace; color: rgba(255,217,61,0.5); width: 40px; text-align: right; }

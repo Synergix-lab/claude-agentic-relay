@@ -149,6 +149,15 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiUpdateVaultDoc(w, req, path)
 	case path == "/vault/stats" && req.Method == http.MethodGet:
 		r.apiGetVaultStats(w, req)
+	// Token usage
+	case path == "/token-usage" && req.Method == http.MethodGet:
+		r.apiGetTokenUsage(w, req)
+	case path == "/token-usage/project" && req.Method == http.MethodGet:
+		r.apiGetTokenUsageByProject(w, req)
+	case path == "/token-usage/agent" && req.Method == http.MethodGet:
+		r.apiGetTokenUsageByAgent(w, req)
+	case path == "/token-usage/timeseries" && req.Method == http.MethodGet:
+		r.apiGetTokenTimeSeries(w, req)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}
@@ -1087,6 +1096,8 @@ func (r *Relay) apiUpdateTask(w http.ResponseWriter, req *http.Request, path str
 		Title       *string `json:"title,omitempty"`
 		Description *string `json:"description,omitempty"`
 		Priority    *string `json:"priority,omitempty"`
+		BoardID     *string `json:"board_id,omitempty"`
+		GoalID      *string `json:"goal_id,omitempty"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -1096,7 +1107,7 @@ func (r *Relay) apiUpdateTask(w http.ResponseWriter, req *http.Request, path str
 		body.Project = "default"
 	}
 
-	task, err := r.DB.UpdateTaskFields(taskID, body.Project, body.Title, body.Description, body.Priority)
+	task, err := r.DB.UpdateTaskFields(taskID, body.Project, body.Title, body.Description, body.Priority, body.BoardID, body.GoalID)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "failed to update task", err)
 		return
@@ -1592,4 +1603,77 @@ func (r *Relay) apiGetFileLocks(w http.ResponseWriter, req *http.Request) {
 		locks = []models.FileLock{}
 	}
 	writeJSON(w, locks)
+}
+
+// --- Token Usage API ---
+
+func (r *Relay) apiGetTokenUsage(w http.ResponseWriter, req *http.Request) {
+	period := req.URL.Query().Get("period")
+	since := db.PeriodToSince(period)
+	data, err := r.DB.GetTokenUsageByProject(since)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to get token usage", err)
+		return
+	}
+	if data == nil {
+		data = []db.TokenUsageSummary{}
+	}
+	writeJSON(w, data)
+}
+
+func (r *Relay) apiGetTokenUsageByProject(w http.ResponseWriter, req *http.Request) {
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+	period := req.URL.Query().Get("period")
+	since := db.PeriodToSince(period)
+	data, err := r.DB.GetTokenUsageByAgent(project, since)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to get token usage by agent", err)
+		return
+	}
+	if data == nil {
+		data = []db.TokenUsageSummary{}
+	}
+	writeJSON(w, data)
+}
+
+func (r *Relay) apiGetTokenUsageByAgent(w http.ResponseWriter, req *http.Request) {
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+	agent := req.URL.Query().Get("agent")
+	period := req.URL.Query().Get("period")
+	since := db.PeriodToSince(period)
+	data, err := r.DB.GetTokenUsageByTool(project, agent, since)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to get token usage by tool", err)
+		return
+	}
+	if data == nil {
+		data = []db.TokenUsageSummary{}
+	}
+	writeJSON(w, data)
+}
+
+func (r *Relay) apiGetTokenTimeSeries(w http.ResponseWriter, req *http.Request) {
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+	agent := req.URL.Query().Get("agent")
+	period := req.URL.Query().Get("period")
+	since := db.PeriodToSince(period)
+	bucket := db.PeriodToBucket(period)
+	data, err := r.DB.GetTokenTimeSeries(project, agent, since, bucket)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to get token time series", err)
+		return
+	}
+	if data == nil {
+		data = []db.TokenTimeBucket{}
+	}
+	writeJSON(w, data)
 }
