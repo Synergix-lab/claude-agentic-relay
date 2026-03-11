@@ -338,15 +338,21 @@ func (d *DB) GetParentChain(taskID, project string) ([]models.Task, error) {
 	return chain, nil
 }
 
-func (d *DB) ListTasks(project, status, profileSlug, priority, assignedTo, boardID string, limit int) ([]models.Task, error) {
+func (d *DB) ListTasks(project, status, profileSlug, priority, assignedTo, boardID string, limit int, includeArchived bool) ([]models.Task, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	query := "SELECT " + taskColumns + " FROM tasks WHERE project = ? AND archived_at IS NULL"
+	query := "SELECT " + taskColumns + " FROM tasks WHERE project = ?"
 	args := []any{project}
 
-	if status != "" {
+	if !includeArchived {
+		query += " AND archived_at IS NULL"
+	}
+
+	if status == "active" {
+		query += " AND status NOT IN ('done', 'cancelled')"
+	} else if status != "" {
 		query += " AND status = ?"
 		args = append(args, status)
 	}

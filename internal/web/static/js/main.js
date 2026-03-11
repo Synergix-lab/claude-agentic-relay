@@ -3015,6 +3015,7 @@ shortcuts.start();
 
 console.log("[relay] UI initializing...");
 const client = new APIClient(onAgents, onConversations, onNewMessages, onNewTasks, onActivity);
+kanbanBoard.apiClient = client;
 client.onGoals = (goals) => {
   if (currentMode === "kanban") {
     kanbanBoard.setGoals(goals);

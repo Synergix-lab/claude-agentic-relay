@@ -152,6 +152,27 @@ func (d *DB) DeleteAgent(project, name string) error {
 	return err
 }
 
+// GetAgentsByProfile returns active agents running a given profile slug.
+func (d *DB) GetAgentsByProfile(project, profileSlug string) ([]models.Agent, error) {
+	rows, err := d.ro().Query(
+		"SELECT "+agentColumns+" FROM agents WHERE project = ? AND profile_slug = ? AND status = 'active'",
+		project, profileSlug,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []models.Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
 func (d *DB) GetAgent(project, name string) (*models.Agent, error) {
 	a, err := scanAgent(d.ro().QueryRow("SELECT "+agentColumns+" FROM agents WHERE name = ? AND project = ?", name, project))
 	if err == sql.ErrNoRows {

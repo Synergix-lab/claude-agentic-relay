@@ -1,36 +1,42 @@
-# MCP Tools Reference
+# MCP Tools Reference (67 tools)
 
 ## Core
-- `register_agent` — register/update agent identity (name, role, description, reports_to, is_executive, profile_slug, session_id)
-- `whoami` — identify Claude Code session
+- `register_agent` — register/update agent identity (name, role, description, reports_to, is_executive, profile_slug, session_id, interest_tags, max_context_bytes)
+- `whoami` — identify Claude Code session via transcript salt matching
 - `get_session_context` — everything in one call (profile, tasks, inbox, conversations, memories)
 - `query_context` — ranked context search (memories + task results)
 - `create_project` — one-command colony setup (8-phase onboarding: CTO + adaptive profiles, auto/interactive mode)
 
 ## Messaging
-- `send_message` — send to agent, team (`team:<slug>`), broadcast (`*`), or conversation
-- `get_inbox` — get messages (unread_only, limit, full_content, apply_budget for context-budget pruning)
+- `send_message` — send to agent, team (`team:<slug>`), broadcast (`*`), or conversation. TTL default: 4h. Priority: P0-P3.
+- `get_inbox` — get messages (unread_only, limit, full_content, apply_budget, min_priority, from, since, exclude_broadcasts)
 - `ack_delivery` — acknowledge message delivery
 - `get_thread` — get full thread from any message ID
 - `mark_read` — mark messages/conversation as read (per-agent read receipts)
+- `list_agents` — list all registered agents and their status
 
 ## Conversations
 - `create_conversation` — create with title + members
 - `list_conversations` — list with unread counts
-- `get_conversation_messages` — get messages (format: full|compact|digest)
+- `get_conversation_messages` — get messages (format: full|compact|digest, full_content)
 - `invite_to_conversation` — add agent to conversation
 - `leave_conversation` — leave a conversation
 - `archive_conversation` — archive a conversation
 
 ## Tasks
-- `dispatch_task` — create task for a profile (priority, board_id, parent_task_id, goal_id)
+- `dispatch_task` — create task for a profile (priority, board_id, parent_task_id, goal_id). Auto-notifies agents running the profile.
 - `claim_task` — accept a pending task
 - `start_task` — begin work on task
 - `complete_task` — finish with result
-- `block_task` — block with reason (notifies dispatcher)
+- `block_task` — block with reason (notifies dispatcher + parent chain)
 - `cancel_task` — cancel from any state with optional reason
 - `get_task` — details + optional subtask chain + goal ancestry if linked
-- `list_tasks` — filtered list (status, profile, priority, board_id)
+- `list_tasks` — filtered list (status, profile, priority, board_id, assigned_to). Use status="active" for non-done/cancelled. include_archived option.
+- `update_task` — update title, description, priority, board_id, goal_id without changing status
+- `move_task` — move task to different board/goal (shortcut for update_task)
+- `archive_tasks` — bulk archive done/cancelled tasks by status/board
+- `batch_complete_tasks` — complete multiple tasks at once (JSON array of {task_id, result})
+- `batch_dispatch_tasks` — dispatch multiple tasks at once (JSON array of {profile, title, description, priority, board_id, goal_id})
 
 ## Goals
 - `create_goal` — create goal in cascade (type: mission|project_goal|agent_goal)
@@ -43,11 +49,10 @@
 - `create_board` — create task board (name, slug, description)
 - `list_boards` — list project boards
 - `archive_board` — archive a board
-- `delete_board` — delete a board
-- `archive_tasks` — bulk archive tasks by status/board
+- `delete_board` — delete a board (must be archived first)
 
 ## Memory
-- `set_memory` — store (key, value, scope, tags, confidence, layer)
+- `set_memory` — store (key, value, scope, tags, confidence, layer, upsert)
 - `get_memory` — retrieve with cascade (agent -> project -> global)
 - `search_memory` — full-text search
 - `list_memories` — browse with filters
@@ -55,7 +60,7 @@
 - `resolve_conflict` — resolve conflicting values
 
 ## Profiles
-- `register_profile` — create/update profile archetype
+- `register_profile` — create/update profile archetype (context_pack, soul_keys, skills, vault_paths)
 - `get_profile` — retrieve with context pack
 - `list_profiles` — list project profiles
 - `find_profiles` — find by skill tag
@@ -63,7 +68,7 @@
 ## Teams & Orgs
 - `create_org` — create organization
 - `list_orgs` — list organizations
-- `create_team` — create team (type: regular|admin|bot)
+- `create_team` — create team (type: regular|admin|bot, parent_team_id)
 - `list_teams` — list teams with members
 - `add_team_member` — add agent to team (role: admin|lead|member|observer)
 - `remove_team_member` — remove agent from team
@@ -71,21 +76,31 @@
 - `add_notify_channel` — allow cross-team messaging to a specific agent
 
 ## Vault (Obsidian Integration)
-- `register_vault` — register an Obsidian vault path for FTS5 indexing
-- `search_vault` — full-text search across vault documents
-- `get_vault_doc` — retrieve a specific document
-- `list_vault_docs` — list documents (filter by project, path pattern)
+- `register_vault` — register an Obsidian vault path for FTS5 indexing + fsnotify watching
+- `search_vault` — full-text search across vault documents (FTS5 syntax)
+- `get_vault_doc` — retrieve a specific document by path
+- `list_vault_docs` — list documents (filter by tags)
 
 ## File Locks
-- `claim_files` — lock files for editing (broadcasts notification, TTL-based)
+- `claim_files` — lock files for editing (broadcasts steering notification, TTL-based)
 - `release_files` — release file locks
 - `list_locks` — list active file locks
 
 ## Project Management
 - `create_project` — one-command colony setup (8-phase onboarding prompt)
-- `delete_project` — delete project and all associated data
+- `delete_project` — cascade delete project and all associated data
 
 ## Agent Lifecycle
-- `sleep_agent` — pause agent (status: sleeping)
-- `deactivate_agent` — deactivate agent
-- `delete_agent` — soft-delete agent
+- `sleep_agent` — pause agent (status: sleeping, messages still queued)
+- `deactivate_agent` — permanently deactivate (re-register to restore)
+- `delete_agent` — soft-delete (hidden from UI, re-register to restore)
+
+## REST API (Web UI)
+- `GET /api/health` — status, version, uptime, db stats
+- `GET /api/projects` — list projects with stats (agents, tasks, tokens_24h)
+- `GET /api/token-usage` — per-project token usage breakdown
+- `GET /api/token-usage/project` — per-agent breakdown
+- `GET /api/token-usage/agent` — per-tool breakdown
+- `GET /api/token-usage/timeseries` — time series data
+- `GET /api/activity/stream` — SSE real-time activity stream
+- `GET /api/events/stream` — SSE MCP events stream

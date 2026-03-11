@@ -55,7 +55,7 @@ func sendMessageTool() mcp.Tool {
 			mcp.Description("Message priority. P0=interrupt (critical), P1=steering (important), P2=advisory (default), P3=info (low). MACP aliases accepted."),
 			mcp.Enum("P0", "P1", "P2", "P3", "interrupt", "steering", "advisory", "info"),
 		),
-		mcp.WithNumber("ttl_seconds", mcp.Description("Time-to-live in seconds (default: 3600 = 1h, 0 = never expires). Expired messages are excluded from inbox.")),
+		mcp.WithNumber("ttl_seconds", mcp.Description("Time-to-live in seconds (default: 14400 = 4h, 0 = never expires). Expired messages are excluded from inbox.")),
 	)
 }
 
@@ -415,12 +415,12 @@ func getTaskTool() mcp.Tool {
 func listTasksTool() mcp.Tool {
 	return mcp.NewTool(
 		"list_tasks",
-		mcp.WithDescription("List tasks with filtering. Returns a task board view sorted by priority."),
+		mcp.WithDescription("List tasks with filtering. Returns a task board view sorted by priority. Use status='active' to get all non-done/cancelled tasks."),
 		asParam,
 		projectParam,
 		mcp.WithString("status",
-			mcp.Description("Filter by status"),
-			mcp.Enum("pending", "accepted", "in-progress", "done", "blocked", "cancelled"),
+			mcp.Description("Filter by status. Use 'active' for all non-done/cancelled tasks."),
+			mcp.Enum("pending", "accepted", "in-progress", "done", "blocked", "cancelled", "active"),
 		),
 		mcp.WithString("profile", mcp.Description("Filter by profile slug")),
 		mcp.WithString("priority",
@@ -430,6 +430,39 @@ func listTasksTool() mcp.Tool {
 		mcp.WithString("assigned_to", mcp.Description("Filter by assigned agent name")),
 		mcp.WithString("board_id", mcp.Description("Filter by board ID")),
 		mcp.WithNumber("limit", mcp.Description("Max results (default: 50)")),
+		mcp.WithBoolean("include_archived", mcp.Description("Include archived tasks in results (default: false)")),
+	)
+}
+
+func batchCompleteTasksTool() mcp.Tool {
+	return mcp.NewTool(
+		"batch_complete_tasks",
+		mcp.WithDescription("Complete multiple tasks at once. Accepts an array of task IDs with optional results. More efficient than calling complete_task N times."),
+		asParam,
+		projectParam,
+		mcp.WithString("tasks", mcp.Description("JSON array of objects: [{\"task_id\":\"...\",\"result\":\"...\"}]. Result is optional."), mcp.Required()),
+	)
+}
+
+func batchDispatchTasksTool() mcp.Tool {
+	return mcp.NewTool(
+		"batch_dispatch_tasks",
+		mcp.WithDescription("Dispatch multiple tasks at once. Accepts an array of task definitions. More efficient than calling dispatch_task N times."),
+		asParam,
+		projectParam,
+		mcp.WithString("tasks", mcp.Description("JSON array of objects: [{\"profile\":\"...\",\"title\":\"...\",\"description\":\"...\",\"priority\":\"P2\",\"board_id\":\"...\",\"goal_id\":\"...\"}]. Only profile and title are required."), mcp.Required()),
+	)
+}
+
+func moveTaskTool() mcp.Tool {
+	return mcp.NewTool(
+		"move_task",
+		mcp.WithDescription("Move a task to a different board and/or goal. Shortcut for update_task when you only need to change board/goal assignment."),
+		asParam,
+		projectParam,
+		mcp.WithString("task_id", mcp.Description("Task ID to move"), mcp.Required()),
+		mcp.WithString("board_id", mcp.Description("New board ID (use empty string to unassign from board)")),
+		mcp.WithString("goal_id", mcp.Description("New goal ID (use empty string to unassign from goal)")),
 	)
 }
 

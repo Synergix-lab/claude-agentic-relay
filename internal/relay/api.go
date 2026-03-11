@@ -29,6 +29,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 	path := strings.TrimPrefix(req.URL.Path, "/api")
 
 	switch {
+	case path == "/health" && req.Method == http.MethodGet:
+		r.apiHealth(w)
 	case path == "/projects" && req.Method == http.MethodGet:
 		r.apiGetProjects(w)
 	case strings.HasPrefix(path, "/projects/") && req.Method == http.MethodDelete:
@@ -182,6 +184,17 @@ func (r *Relay) apiGetProjects(w http.ResponseWriter) {
 		projects = []models.ProjectInfo{}
 	}
 	writeJSON(w, projects)
+}
+
+func (r *Relay) apiHealth(w http.ResponseWriter) {
+	stats := r.DB.GetHealthStats()
+	writeJSON(w, map[string]any{
+		"status":  "ok",
+		"version": "0.5.0",
+		"uptime":  time.Since(r.StartedAt).String(),
+		"started": r.StartedAt.Format(time.RFC3339),
+		"db":      stats,
+	})
 }
 
 func (r *Relay) apiGetProject(w http.ResponseWriter, name string) {
@@ -917,7 +930,7 @@ func (r *Relay) apiGetTasks(w http.ResponseWriter, req *http.Request) {
 	priority := req.URL.Query().Get("priority")
 
 	boardID := req.URL.Query().Get("board_id")
-	tasks, err := r.DB.ListTasks(project, status, profile, priority, "", boardID, 100)
+	tasks, err := r.DB.ListTasks(project, status, profile, priority, "", boardID, 100, false)
 	if err != nil {
 		http.Error(w, `{"error":"failed to list tasks"}`, http.StatusInternalServerError)
 		return
@@ -934,7 +947,7 @@ func (r *Relay) apiGetHumanTasks(w http.ResponseWriter, req *http.Request) {
 	if status == "" {
 		status = "" // all statuses
 	}
-	tasks, err := r.DB.ListTasks(project, status, "human", "", "", "", 100)
+	tasks, err := r.DB.ListTasks(project, status, "human", "", "", "", 100, false)
 	if err != nil {
 		http.Error(w, `{"error":"failed to list human tasks"}`, http.StatusInternalServerError)
 		return

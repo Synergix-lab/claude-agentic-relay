@@ -84,6 +84,18 @@ func (d *DB) Optimize() {
 	d.conn.Exec("PRAGMA wal_checkpoint(PASSIVE)")
 }
 
+// GetHealthStats returns aggregate database statistics for the /health endpoint.
+func (d *DB) GetHealthStats() map[string]int64 {
+	stats := map[string]int64{}
+	tables := []string{"agents", "messages", "tasks", "projects", "memories", "boards", "goals", "conversations"}
+	for _, t := range tables {
+		var c int64
+		d.ro().QueryRow("SELECT COUNT(*) FROM " + t).Scan(&c)
+		stats[t] = c
+	}
+	return stats
+}
+
 // DBPath returns the default database path without opening it.
 func DBPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -245,7 +257,7 @@ func migrate(conn *sql.DB) error {
 		"project":         "TEXT NOT NULL DEFAULT 'default'",
 		"task_id":         "TEXT",
 		"priority":        "TEXT NOT NULL DEFAULT 'P2'",
-		"ttl_seconds":     "INTEGER NOT NULL DEFAULT 3600",
+		"ttl_seconds":     "INTEGER NOT NULL DEFAULT 14400",
 		"expired_at":      "TEXT",
 	})
 

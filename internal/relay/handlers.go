@@ -227,7 +227,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 	replyTo := optionalString(req.GetString("reply_to", ""))
 	conversationID := optionalString(req.GetString("conversation_id", ""))
 	priority := mapPriority(req.GetString("priority", "P2"))
-	ttlSeconds := req.GetInt("ttl_seconds", 3600)
+	ttlSeconds := req.GetInt("ttl_seconds", 14400)
 
 	// Support "to": "conversation:<id>" shorthand
 	if conversationID == nil && strings.HasPrefix(to, "conversation:") {
@@ -1135,6 +1135,28 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 	boardID := optionalString(req.GetString("board_id", ""))
 	goalID := optionalString(req.GetString("goal_id", ""))
 
+	// Resolve truncated board_id prefix to full UUID
+	if boardID != nil && len(*boardID) < 36 {
+		boards, _ := h.db.ListBoards(project)
+		for _, b := range boards {
+			if strings.HasPrefix(b.ID, *boardID) {
+				boardID = &b.ID
+				break
+			}
+		}
+	}
+
+	// Resolve truncated goal_id prefix to full UUID
+	if goalID != nil && len(*goalID) < 36 {
+		goals, _ := h.db.ListGoals(project, "", "", nil, 0)
+		for _, g := range goals {
+			if strings.HasPrefix(g.ID, *goalID) {
+				goalID = &g.ID
+				break
+			}
+		}
+	}
+
 	// Auto-create "human" profile if dispatching to it for the first time
 	if profile == "human" {
 		existing, _ := h.db.GetProfile(project, "human")
@@ -1169,6 +1191,21 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 	// Push notification for P0/P1 tasks
 	if priority == "P0" || priority == "P1" {
 		h.registry.NotifyProfile(project, profile, agent, fmt.Sprintf("[%s] %s", priority, title), task.ID)
+	}
+
+	// Auto-notification: send inbox message to agents running this profile
+	agents, _ := h.db.GetAgentsByProfile(project, profile)
+	for _, a := range agents {
+		if a.Name == agent {
+			continue // don't notify the dispatcher
+		}
+		subject := fmt.Sprintf("New task: %s", title)
+		content := fmt.Sprintf("[%s] %s\n\nTask ID: %s\nProfile: %s\nDispatched by: %s", priority, title, task.ID, profile, agent)
+		if description != "" && len(description) <= 200 {
+			content += "\n\n" + description
+		}
+		taskID := task.ID
+		h.db.InsertMessage(project, agent, a.Name, "task", subject, content, fmt.Sprintf(`{"task_id":"%s"}`, taskID), "P2", 14400, nil, nil)
 	}
 
 	h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: profile, Label: title})
@@ -1425,6 +1462,143 @@ func (h *Handlers) HandleArchiveTasks(ctx context.Context, req mcp.CallToolReque
 	return mcp.NewToolResultText(msg), nil
 }
 
+func (h *Handlers) HandleMoveTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	taskID := req.GetString("task_id", "")
+	if taskID == "" {
+		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	boardID := optionalString(req.GetString("board_id", ""))
+	goalID := optionalString(req.GetString("goal_id", ""))
+
+	if boardID == nil && goalID == nil {
+		return mcp.NewToolResultError("at least one of board_id or goal_id is required"), nil
+	}
+
+	// Resolve truncated board_id prefix
+	if boardID != nil && len(*boardID) > 0 && len(*boardID) < 36 {
+		boards, _ := h.db.ListBoards(project)
+		for _, b := range boards {
+			if strings.HasPrefix(b.ID, *boardID) {
+				boardID = &b.ID
+				break
+			}
+		}
+	}
+
+	// Resolve truncated goal_id prefix
+	if goalID != nil && len(*goalID) > 0 && len(*goalID) < 36 {
+		goals, _ := h.db.ListGoals(project, "", "", nil, 0)
+		for _, g := range goals {
+			if strings.HasPrefix(g.ID, *goalID) {
+				goalID = &g.ID
+				break
+			}
+		}
+	}
+
+	task, err := h.db.UpdateTaskFields(taskID, project, nil, nil, nil, boardID, goalID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to move task: %v", err)), nil
+	}
+
+	h.events.Emit(MCPEvent{Type: "task", Action: "move", Agent: agent, Project: project, Label: task.Title})
+	return h.resultJSONTracked(project, agent, "move_task", task)
+}
+
+func (h *Handlers) HandleBatchCompleteTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	tasksJSON := req.GetString("tasks", "[]")
+
+	var items []struct {
+		TaskID string  `json:"task_id"`
+		Result *string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(tasksJSON), &items); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
+	}
+	if len(items) == 0 {
+		return mcp.NewToolResultError("tasks array is empty"), nil
+	}
+
+	var completed []string
+	var errors []string
+	for _, item := range items {
+		taskID, err := h.resolveTaskID(item.TaskID, project)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", item.TaskID, err))
+			continue
+		}
+		task, err := h.db.CompleteTask(taskID, agent, project, item.Result)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", taskID, err))
+			continue
+		}
+		completed = append(completed, taskID)
+		h.events.Emit(MCPEvent{Type: "task", Action: "complete", Agent: agent, Project: project, Label: task.Title})
+	}
+
+	return h.resultJSONTracked(project, agent, "batch_complete_tasks", map[string]any{
+		"completed": completed,
+		"errors":    errors,
+		"total":     len(items),
+	})
+}
+
+func (h *Handlers) HandleBatchDispatchTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	tasksJSON := req.GetString("tasks", "[]")
+
+	var items []struct {
+		Profile     string  `json:"profile"`
+		Title       string  `json:"title"`
+		Description string  `json:"description"`
+		Priority    string  `json:"priority"`
+		BoardID     *string `json:"board_id"`
+		GoalID      *string `json:"goal_id"`
+	}
+	if err := json.Unmarshal([]byte(tasksJSON), &items); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
+	}
+	if len(items) == 0 {
+		return mcp.NewToolResultError("tasks array is empty"), nil
+	}
+
+	var dispatched []map[string]string
+	var errors []string
+	for _, item := range items {
+		if item.Profile == "" || item.Title == "" {
+			errors = append(errors, fmt.Sprintf("missing profile or title: %+v", item))
+			continue
+		}
+		priority := item.Priority
+		if priority == "" {
+			priority = "P2"
+		}
+		task, err := h.db.DispatchTask(project, item.Profile, agent, item.Title, item.Description, priority, nil, item.BoardID, item.GoalID)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
+			continue
+		}
+		dispatched = append(dispatched, map[string]string{"id": task.ID, "title": task.Title})
+		h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: item.Profile, Label: item.Title})
+	}
+
+	return h.resultJSONTracked(project, agent, "batch_dispatch_tasks", map[string]any{
+		"dispatched": dispatched,
+		"errors":     errors,
+		"total":      len(items),
+	})
+}
+
 func (h *Handlers) HandleGetTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(ctx, req)
 	taskID := req.GetString("task_id", "")
@@ -1479,8 +1653,9 @@ func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest)
 	assignedTo := req.GetString("assigned_to", "")
 	boardID := req.GetString("board_id", "")
 	limit := req.GetInt("limit", 50)
+	includeArchived := req.GetBool("include_archived", false)
 
-	tasks, err := h.db.ListTasks(project, status, profile, priority, assignedTo, boardID, limit)
+	tasks, err := h.db.ListTasks(project, status, profile, priority, assignedTo, boardID, limit, includeArchived)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list tasks: %v", err)), nil
 	}
@@ -2236,7 +2411,7 @@ func (h *Handlers) HandleQueryContext(ctx context.Context, req mcp.CallToolReque
 	}
 
 	// Source 2: completed tasks (implicit knowledge)
-	doneTasks, err := h.db.ListTasks(project, "done", "", "", "", "", limit)
+	doneTasks, err := h.db.ListTasks(project, "done", "", "", "", "", limit, false)
 	if err != nil {
 		doneTasks = []models.Task{}
 	}

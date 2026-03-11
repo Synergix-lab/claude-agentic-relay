@@ -15,7 +15,7 @@ func (d *DB) InsertMessage(project, from, to, msgType, subject, content, metadat
 		priority = "P2"
 	}
 	if ttlSeconds < 0 {
-		ttlSeconds = 3600
+		ttlSeconds = 14400
 	}
 
 	msg := &models.Message{
