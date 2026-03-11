@@ -14,9 +14,13 @@ import (
 
 const memoryTimeFmt = "2006-01-02T15:04:05.000000Z"
 
-// SetMemory creates or versions a memory. If the key already exists at the same
-// scope with a different value, a conflict is flagged instead of overwriting.
-func (d *DB) SetMemory(project, agentName, key, value, tagsJSON, scope, confidence, layer string) (*models.Memory, error) {
+// SetMemory creates or versions a memory. If upsert is true, overwrites
+// existing values silently (archives old version). If false, flags a conflict.
+func (d *DB) SetMemory(project, agentName, key, value, tagsJSON, scope, confidence, layer string, upsert ...bool) (*models.Memory, error) {
+	doUpsert := true
+	if len(upsert) > 0 {
+		doUpsert = upsert[0]
+	}
 	value = normalize.JSONKeys(value)
 	now := time.Now().UTC().Format(memoryTimeFmt)
 	if confidence == "" {
@@ -53,7 +57,44 @@ func (d *DB) SetMemory(project, agentName, key, value, tagsJSON, scope, confiden
 			return existing, nil
 		}
 
-		// Different value — create new version, flag conflict
+		if doUpsert {
+			// Upsert mode — archive old version and insert new one silently
+			_, archErr := d.conn.Exec(
+				`UPDATE memories SET archived_at = ?, archived_by = ? WHERE id = ?`,
+				now, "upsert", existing.ID,
+			)
+			if archErr != nil {
+				return nil, fmt.Errorf("archive old memory: %w", archErr)
+			}
+			mem := &models.Memory{
+				ID:         id,
+				Key:        key,
+				Value:      value,
+				Tags:       tagsJSON,
+				Scope:      scope,
+				Project:    project,
+				AgentName:  agentName,
+				Confidence: confidence,
+				Version:    existing.Version + 1,
+				Supersedes: &existing.ID,
+				CreatedAt:  now,
+				UpdatedAt:  now,
+				Layer:      layer,
+			}
+			_, err := d.conn.Exec(
+				`INSERT INTO memories (id, key, value, tags, scope, project, agent_name, confidence, version, supersedes, created_at, updated_at, layer)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				mem.ID, mem.Key, mem.Value, mem.Tags, mem.Scope, mem.Project,
+				mem.AgentName, mem.Confidence, mem.Version, mem.Supersedes,
+				mem.CreatedAt, mem.UpdatedAt, mem.Layer,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("insert upserted memory: %w", err)
+			}
+			return mem, nil
+		}
+
+		// Conflict mode — create new version, flag conflict
 		mem := &models.Memory{
 			ID:           id,
 			Key:          key,

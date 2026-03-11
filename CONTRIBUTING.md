@@ -103,7 +103,7 @@ A maintainer will review. We aim for fast turnaround. Once approved, the PR is s
 
 ### Good first contributions
 
-- Add tests (there are none yet — any test is a good test)
+- Add tests (MCP handlers and REST API have coverage — extend it)
 - Improve error messages in MCP tool handlers
 - Add new pixel art planet biomes or robot variants
 - Documentation improvements

@@ -3,6 +3,41 @@
 All notable changes to wrai.th are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-03-11
+
+### Added
+- **`/health` REST endpoint** — uptime, version, DB row counts for monitoring
+- **`move_task` MCP tool** — move task to different board/goal with prefix resolution
+- **`batch_complete_tasks` MCP tool** — complete multiple tasks in one call
+- **`batch_dispatch_tasks` MCP tool** — dispatch multiple tasks in one call
+- **`list_tasks` filters** — `status: "active"` excludes done/cancelled, `include_archived` boolean
+- **Auto-notifications** — dispatching a task sends an inbox message to agents running the target profile
+- **Inline checklist** — interactive checkboxes on kanban cards, toggle items without opening the edit form
+
+### Changed
+- Default message TTL raised from 1h to **4h** (14400s)
+
+### Fixed
+- `GetAgentTasks` and `GetUnackedTasks` now exclude archived tasks
+- `apiError` uses `json.Marshal` for proper JSON escaping
+- Board dropdown in edit form showed empty names (`b.title` → `b.name`)
+- `assigned_to` field value was never saved in edit form
+
+## [0.4.0] — 2026-03-10
+
+### Added
+- **Kanban board** — full task management UI with drag-and-drop, board/goal columns, edit form with checklist and larger textarea
+- **Pixel holo UI assets** — 9-slice panels, buttons, dividers, loading wheel, icon sets
+- **Cascade delete** — deleting a project removes all related agents, tasks, messages, memories, boards, goals, conversations
+
+### Fixed
+- Vault `indexFile` errors now logged instead of silently swallowed during full reindex
+- Duplicate `ZOOM_STEPS` and scale-btn declarations removed
+- CRLF line endings in installer scripts
+- Installer wrapped in block for `curl | sh` pipe compatibility
+- Nil pointer in `DB.Close()` when opened read-only
+- Release workflow made idempotent with `--clobber` uploads
+
 ## [0.3.0] — 2026-03-09
 
 ### Added
@@ -49,6 +84,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Versions follow 
 
 Initial public release — MCP relay server with SQLite persistence, canvas UI, pixel art galaxy/colony views, vault indexing, CI/CD with cross-platform binary builds.
 
+[0.5.0]: https://github.com/Synergix-lab/WRAI.TH/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Synergix-lab/WRAI.TH/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Synergix-lab/WRAI.TH/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Synergix-lab/WRAI.TH/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Synergix-lab/WRAI.TH/compare/v0.1.1...v0.2.0

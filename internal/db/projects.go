@@ -84,7 +84,7 @@ func (d *DB) DeleteProject(name string) error {
 
 	// Delete all related data (tables with a project column)
 	tables := []string{
-		"deliveries", "agent_notify_channels", "team_members", "teams",
+		"token_usage", "deliveries", "agent_notify_channels", "team_members", "teams",
 		"goals", "boards", "vault_docs", "vaults", "file_locks",
 		"memories", "profiles", "tasks", "conversations", "messages", "agents",
 	}
@@ -119,13 +119,15 @@ func (d *DB) DeleteProject(name string) error {
 
 // ListProjectsWithInfo returns all projects with their planet_type and stats.
 func (d *DB) ListProjectsWithInfo() ([]models.ProjectInfo, error) {
+	since24h := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 	rows, err := d.ro().Query(`
 		SELECT p.name, p.planet_type, p.created_at,
 			COALESCE(ac.agent_count, 0),
 			COALESCE(ac.online_count, 0),
 			COALESCE(tc.total_tasks, 0),
 			COALESCE(tc.active_tasks, 0),
-			COALESCE(tc.done_tasks, 0)
+			COALESCE(tc.done_tasks, 0),
+			COALESCE(tu.tokens_24h, 0)
 		FROM projects p
 		LEFT JOIN (
 			SELECT project, COUNT(*) as agent_count,
@@ -139,8 +141,12 @@ func (d *DB) ListProjectsWithInfo() ([]models.ProjectInfo, error) {
 				SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done_tasks
 			FROM tasks GROUP BY project
 		) tc ON tc.project = p.name
+		LEFT JOIN (
+			SELECT project, SUM(bytes)/4 as tokens_24h
+			FROM token_usage WHERE created_at >= ? GROUP BY project
+		) tu ON tu.project = p.name
 		ORDER BY p.name
-	`)
+	`, since24h)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +155,7 @@ func (d *DB) ListProjectsWithInfo() ([]models.ProjectInfo, error) {
 	var projects []models.ProjectInfo
 	for rows.Next() {
 		var p models.ProjectInfo
-		if err := rows.Scan(&p.Name, &p.PlanetType, &p.CreatedAt, &p.AgentCount, &p.OnlineCount, &p.TotalTasks, &p.ActiveTasks, &p.DoneTasks); err != nil {
+		if err := rows.Scan(&p.Name, &p.PlanetType, &p.CreatedAt, &p.AgentCount, &p.OnlineCount, &p.TotalTasks, &p.ActiveTasks, &p.DoneTasks, &p.Tokens24h); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)

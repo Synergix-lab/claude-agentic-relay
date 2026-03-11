@@ -300,6 +300,70 @@ const KANBAN_STYLES = `
 .kb-agent {
   color: #00e676;
 }
+.kb-card-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.kb-card-cl-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kb-card-cl-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.kb-card-cl-fill {
+  height: 100%;
+  background: #00e676;
+  border-radius: 2px;
+  transition: width 0.2s;
+}
+.kb-card-cl-text {
+  font: 9px 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,0.35);
+  white-space: nowrap;
+}
+.kb-card-cl-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 3px;
+}
+.kb-card-cl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: 9px/1.3 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  padding: 1px 0;
+}
+.kb-card-cl-row:hover {
+  color: rgba(255,255,255,0.75);
+}
+.kb-card-cl-row input[type="checkbox"] {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #00e676;
+  flex-shrink: 0;
+}
+.kb-card-cl-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-card-cl-row.kb-cl-done span {
+  text-decoration: line-through;
+  color: rgba(255,255,255,0.25);
+}
 .kb-card-actions {
   position: absolute;
   bottom: 6px;
@@ -391,12 +455,17 @@ const KANBAN_STYLES = `
   background: rgba(15,15,26,0.98);
   border: 1px solid rgba(108,92,231,0.3);
   border-radius: 4px;
-  padding: 20px;
-  width: 360px;
+  padding: 24px;
+  width: 560px;
   max-width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
   animation: formIn 0.2s ease-out;
   box-shadow: 0 0 30px rgba(108,92,231,0.15);
 }
+.kb-form::-webkit-scrollbar { width: 4px; }
+.kb-form::-webkit-scrollbar-track { background: transparent; }
+.kb-form::-webkit-scrollbar-thumb { background: rgba(108,92,231,0.3); border-radius: 2px; }
 .kb-form h3 {
   margin: 0 0 16px;
   font-size: 13px;
@@ -439,7 +508,121 @@ const KANBAN_STYLES = `
 }
 .kb-field textarea {
   resize: vertical;
-  min-height: 60px;
+  min-height: 200px;
+}
+.kb-field-row {
+  display: flex;
+  gap: 12px;
+}
+.kb-field-row .kb-field {
+  flex: 1;
+}
+.kb-field--meta {
+  display: flex;
+  gap: 16px;
+  font: 9px 'JetBrains Mono', monospace;
+  color: rgba(99,110,114,0.6);
+  padding-top: 4px;
+  border-top: 1px solid rgba(108,92,231,0.1);
+}
+
+/* ── Checklist ── */
+.kb-checklist {
+  margin-top: 4px;
+}
+.kb-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 2px;
+  transition: background 0.1s;
+}
+.kb-checklist-item:hover {
+  background: rgba(108,92,231,0.08);
+}
+.kb-checklist-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #6c5ce7;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.kb-checklist-item input[type="text"] {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #dfe6e9;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+}
+.kb-checklist-item input[type="text"]:focus {
+  border-bottom: 1px solid rgba(108,92,231,0.4);
+}
+.kb-checklist-item.kb-checked input[type="text"] {
+  text-decoration: line-through;
+  color: #636e72;
+}
+.kb-checklist-remove {
+  background: none;
+  border: none;
+  color: #636e72;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.kb-checklist-item:hover .kb-checklist-remove {
+  opacity: 1;
+}
+.kb-checklist-remove:hover {
+  color: #ff6b6b;
+}
+.kb-checklist-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  background: none;
+  border: 1px dashed rgba(108,92,231,0.2);
+  border-radius: 2px;
+  color: #636e72;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: 100%;
+}
+.kb-checklist-add:hover {
+  border-color: rgba(108,92,231,0.5);
+  color: #a29bfe;
+  background: rgba(108,92,231,0.05);
+}
+.kb-checklist-progress {
+  font-size: 9px;
+  color: #636e72;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kb-checklist-bar {
+  flex: 1;
+  height: 3px;
+  background: rgba(108,92,231,0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.kb-checklist-bar-fill {
+  height: 100%;
+  background: #6c5ce7;
+  border-radius: 2px;
+  transition: width 0.2s;
 }
 .kb-form-btns {
   display: flex;
@@ -658,27 +841,59 @@ export class KanbanBoard {
 
   /* ─── Public API ─── */
 
+  /** Fast fingerprint — only fields that affect visual display. */
+  _fingerprint(arr) {
+    let h = 0;
+    for (const item of arr) {
+      const s = item.id + '|' + (item.status || '') + '|' + (item.title || '') + '|' +
+        (item.priority || '') + '|' + (item.assigned_to || '') + '|' + (item.board_id || '') +
+        '|' + (item.goal_id || '') + '|' + (item.description || '');
+      for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return h;
+  }
+
   setTasks(tasks) {
-    this.tasks = tasks || [];
-    // Don't re-render while user is interacting with a form
+    const incoming = tasks || [];
+    const fp = this._fingerprint(incoming);
+    if (fp === this._tasksFP && incoming.length === this.tasks.length) return;
+    this.tasks = incoming;
+    this._tasksFP = fp;
     if (this._overlay) return;
-    this._render();
+    this._scheduleRender();
   }
 
   setBoards(boards) {
-    this.boards = boards || [];
+    const incoming = boards || [];
+    const fp = this._fingerprint(incoming);
+    if (fp === this._boardsFP && incoming.length === this.boards.length) return;
+    this.boards = incoming;
+    this._boardsFP = fp;
     if (this._overlay) return;
-    this._render();
+    this._scheduleRender();
   }
 
   setGoals(goals) {
-    this.goals = goals || [];
+    const incoming = goals || [];
+    const fp = this._fingerprint(incoming);
+    if (fp === this._goalsFP && incoming.length === this.goals.length) return;
+    this.goals = incoming;
+    this._goalsFP = fp;
     this.goalMap.clear();
     for (const g of this.goals) {
       this.goalMap.set(g.id, g);
     }
     if (this._overlay) return;
-    this._render();
+    this._scheduleRender();
+  }
+
+  /** Debounced render — coalesces rapid updates into a single rAF paint. */
+  _scheduleRender() {
+    if (this._renderRAF) return;
+    this._renderRAF = requestAnimationFrame(() => {
+      this._renderRAF = null;
+      this._render();
+    });
   }
 
   show() {
@@ -708,18 +923,128 @@ export class KanbanBoard {
   /* ─── Rendering ─── */
 
   _render() {
-    // Save scroll positions of columns before nuke
-    const scrollPositions = {};
-    this.root.querySelectorAll('.kb-col-body').forEach(body => {
-      const status = body.parentElement?.dataset?.status;
-      if (status && body.scrollTop > 0) scrollPositions[status] = body.scrollTop;
+    // First render — build from scratch
+    if (!this.root.querySelector('.kb-header')) {
+      this._fullRender();
+      return;
+    }
+    // Subsequent renders — patch in place (no DOM nuke, no flash)
+    this._patchRender();
+  }
+
+  _fullRender() {
+    const frag = document.createDocumentFragment();
+    frag.appendChild(this._buildHeader());
+
+    const board = document.createElement('div');
+    board.className = 'kb-board';
+    const { visibleStatuses, groups } = this._getFilteredGroups();
+    for (const status of visibleStatuses) {
+      board.appendChild(this._renderColumn(status, groups[status] || []));
+    }
+    frag.appendChild(board);
+    this.root.replaceChildren(frag);
+  }
+
+  _patchRender() {
+    // Update header tabs active state
+    this.root.querySelectorAll('.kb-tab').forEach(tab => {
+      const isAll = tab.textContent === 'ALL';
+      const board = this.boards.find(b => b.name.toUpperCase() === tab.textContent);
+      if (isAll) tab.classList.toggle('kb-tab--active', this.selectedBoard === null);
+      else if (board) tab.classList.toggle('kb-tab--active', this.selectedBoard === board.id);
     });
-    // Save root scroll position
-    const rootScroll = this.root.scrollTop;
 
-    this.root.innerHTML = '';
+    const { visibleStatuses, groups } = this._getFilteredGroups();
+    const boardEl = this.root.querySelector('.kb-board');
+    if (!boardEl) { this._fullRender(); return; }
 
-    // Header
+    // Sync columns: add/remove as needed
+    const existingCols = boardEl.querySelectorAll('.kb-col');
+    const existingStatuses = Array.from(existingCols).map(c => c.dataset.status);
+
+    // If column structure changed, do a targeted board rebuild only (not the header)
+    if (existingStatuses.join(',') !== visibleStatuses.join(',')) {
+      const newBoard = document.createElement('div');
+      newBoard.className = 'kb-board';
+      for (const status of visibleStatuses) {
+        newBoard.appendChild(this._renderColumn(status, groups[status] || []));
+      }
+      boardEl.replaceWith(newBoard);
+      return;
+    }
+
+    // Patch each column in-place
+    for (const col of existingCols) {
+      const status = col.dataset.status;
+      const tasks = groups[status] || [];
+      const prioOrder = { P0: 0, P1: 1, P2: 2, P3: 3 };
+      tasks.sort((a, b) => (prioOrder[a.priority] ?? 9) - (prioOrder[b.priority] ?? 9));
+
+      // Update count badge
+      const countEl = col.querySelector('.kb-col-count');
+      if (countEl) countEl.textContent = tasks.length;
+
+      const body = col.querySelector('.kb-col-body');
+      if (!body) continue;
+
+      const savedScroll = body.scrollTop;
+
+      // Build map of existing cards
+      const existingCards = new Map();
+      body.querySelectorAll('.kb-card').forEach(card => {
+        existingCards.set(card.dataset.taskId, card);
+      });
+
+      // Build new card list
+      const newTaskIds = tasks.map(t => String(t.id));
+      const existingIds = Array.from(existingCards.keys());
+
+      // If same tasks in same order, just update content of changed cards
+      if (newTaskIds.join(',') === existingIds.join(',')) {
+        for (const task of tasks) {
+          const existing = existingCards.get(String(task.id));
+          if (existing) {
+            // Check if card content needs update
+            const titleEl = existing.querySelector('.kb-card-title');
+            const assignEl = existing.querySelector('.kb-card-assign');
+            if (titleEl && titleEl.textContent !== task.title) titleEl.textContent = task.title;
+            if (assignEl) {
+              const expected = task.assigned_to || '—';
+              if (assignEl.textContent !== expected) assignEl.textContent = expected;
+            }
+          }
+        }
+      } else {
+        // Cards changed — rebuild body content only
+        const emptyEl = body.querySelector('.kb-col-empty');
+        if (tasks.length === 0) {
+          // Clear cards, show empty
+          body.querySelectorAll('.kb-card').forEach(c => c.remove());
+          if (!emptyEl) {
+            const empty = document.createElement('div');
+            empty.className = 'kb-col-empty';
+            empty.textContent = '—';
+            body.appendChild(empty);
+          }
+        } else {
+          if (emptyEl) emptyEl.remove();
+          // Rebuild cards using fragment
+          const cardFrag = document.createDocumentFragment();
+          for (const task of tasks) {
+            cardFrag.appendChild(this._renderCard(task));
+          }
+          // Remove old cards, add new
+          body.querySelectorAll('.kb-card').forEach(c => c.remove());
+          body.appendChild(cardFrag);
+        }
+      }
+
+      body.scrollTop = savedScroll;
+    }
+  }
+
+  _buildHeader() {
     const header = document.createElement('div');
     header.className = 'kb-header';
 
@@ -727,7 +1052,6 @@ export class KanbanBoard {
     titleArea.style.cssText = 'display:flex;align-items:center;gap:12px';
     titleArea.innerHTML = `<h2>Task Board</h2>`;
 
-    // Board tabs
     if (this.boards.length > 0) {
       const tabs = document.createElement('div');
       tabs.style.cssText = 'display:flex;gap:4px;align-items:center';
@@ -749,10 +1073,8 @@ export class KanbanBoard {
       titleArea.appendChild(tabs);
     }
 
-
     header.appendChild(titleArea);
 
-    // Controls: hide-done checkbox + add button
     const controls = document.createElement('div');
     controls.style.cssText = 'display:flex;align-items:center;gap:10px';
 
@@ -762,9 +1084,9 @@ export class KanbanBoard {
     doneCheck.type = 'checkbox';
     doneCheck.checked = this.showDone;
     doneCheck.style.cssText = 'accent-color:#6c5ce7;cursor:pointer';
-    doneCheck.addEventListener('change', () => { this.showDone = doneCheck.checked; this._render(); });
+    doneCheck.addEventListener('change', () => { this.showDone = doneCheck.checked; this._fullRender(); });
     doneLabel.appendChild(doneCheck);
-    doneLabel.appendChild(document.createTextNode('Done'));
+    doneLabel.appendChild(document.createTextNode('Done / Cancelled'));
     controls.appendChild(doneLabel);
 
     const addBtn = document.createElement('button');
@@ -775,46 +1097,32 @@ export class KanbanBoard {
     controls.appendChild(addBtn);
 
     header.appendChild(controls);
-    this.root.appendChild(header);
+    return header;
+  }
 
-    // Filter tasks
+  _getFilteredGroups() {
     let filtered = this.tasks;
     if (this.selectedBoard !== null) {
-      filtered = filtered.filter(t => t.board_id === this.selectedBoard);
+      filtered = filtered.filter(t =>
+        t.board_id === this.selectedBoard ||
+        (t.board_id && this.selectedBoard.startsWith(t.board_id)) ||
+        (t.board_id && t.board_id.startsWith(this.selectedBoard))
+      );
     }
     if (this.selectedGoal !== null) {
       filtered = filtered.filter(t => t.goal_id === this.selectedGoal);
     }
     if (!this.showDone) {
-      filtered = filtered.filter(t => t.status !== 'done');
+      filtered = filtered.filter(t => t.status !== 'done' && t.status !== 'cancelled');
     }
-
-    // Columns to show
-    const visibleStatuses = this.showDone ? STATUS_ORDER : STATUS_ORDER.filter(s => s !== 'done');
-
-    // Group tasks by status
+    const visibleStatuses = this.showDone ? STATUS_ORDER : STATUS_ORDER.filter(s => s !== 'done' && s !== 'cancelled');
     const groups = {};
     for (const t of filtered) {
       const s = t.status || 'pending';
       if (!groups[s]) groups[s] = [];
       groups[s].push(t);
     }
-
-    const board = document.createElement('div');
-    board.className = 'kb-board';
-
-    for (const status of visibleStatuses) {
-      board.appendChild(this._renderColumn(status, groups[status] || []));
-    }
-
-    this.root.appendChild(board);
-
-    // Restore scroll positions
-    this.root.scrollTop = rootScroll;
-    this.root.querySelectorAll('.kb-col-body').forEach(body => {
-      const status = body.parentElement?.dataset?.status;
-      if (status && scrollPositions[status]) body.scrollTop = scrollPositions[status];
-    });
+    return { visibleStatuses, groups };
   }
 
   _renderColumn(status, tasks) {
@@ -942,6 +1250,60 @@ export class KanbanBoard {
     }
     card.appendChild(meta);
 
+    // Inline checklist (checkable directly on card)
+    const parsed = this._parseChecklist(task.description || '');
+    if (parsed.items.length > 0) {
+      const done = parsed.items.filter(i => i.checked).length;
+      const total = parsed.items.length;
+      const pct = Math.round((done / total) * 100);
+      const clWrap = document.createElement('div');
+      clWrap.className = 'kb-card-checklist kb-card-checklist--inline';
+
+      // Progress bar
+      clWrap.innerHTML = `
+        <div class="kb-card-cl-header">
+          <div class="kb-card-cl-bar"><div class="kb-card-cl-fill" style="width:${pct}%"></div></div>
+          <span class="kb-card-cl-text">${done}/${total}</span>
+        </div>
+      `;
+
+      // Inline checkboxes
+      const listEl = document.createElement('div');
+      listEl.className = 'kb-card-cl-items';
+      parsed.items.forEach((item, idx) => {
+        const row = document.createElement('label');
+        row.className = 'kb-card-cl-row' + (item.checked ? ' kb-cl-done' : '');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = item.checked;
+        cb.addEventListener('click', (e) => {
+          e.stopPropagation(); // prevent card click
+        });
+        cb.addEventListener('change', (e) => {
+          e.stopPropagation();
+          parsed.items[idx].checked = cb.checked;
+          row.classList.toggle('kb-cl-done', cb.checked);
+          // Rebuild description and save
+          const newDesc = this._rebuildDescription(parsed);
+          this._saveChecklist(task.id, newDesc);
+          // Update progress
+          const newDone = parsed.items.filter(i => i.checked).length;
+          const newPct = Math.round((newDone / total) * 100);
+          const fill = clWrap.querySelector('.kb-card-cl-fill');
+          const text = clWrap.querySelector('.kb-card-cl-text');
+          if (fill) fill.style.width = newPct + '%';
+          if (text) text.textContent = newDone + '/' + total;
+        });
+        const span = document.createElement('span');
+        span.textContent = item.text;
+        row.appendChild(cb);
+        row.appendChild(span);
+        listEl.appendChild(row);
+      });
+      clWrap.appendChild(listEl);
+      card.appendChild(clWrap);
+    }
+
     // Action buttons (visible on hover)
     const actions = document.createElement('div');
     actions.className = 'kb-card-actions';
@@ -978,16 +1340,11 @@ export class KanbanBoard {
       this._showCtxMenu(e.clientX, e.clientY, task);
     });
 
-    // Click to expand detail
+    // Click to open detail popup (Trello-style)
     card.addEventListener('click', (e) => {
       if (e.target.closest('.kb-action-btn')) return;
-      this._toggleDetail(card, task);
+      this._showEditForm(task);
     });
-
-    // If this card is expanded, show detail
-    if (this.expandedCard === task.id) {
-      card.appendChild(this._buildDetail(task));
-    }
 
     return card;
   }
@@ -1141,6 +1498,112 @@ export class KanbanBoard {
     }
   }
 
+  /* ─── Checklist helpers ─── */
+
+  _parseChecklist(description) {
+    if (!description) return { text: '', items: [] };
+    const lines = description.split('\n');
+    const textLines = [];
+    const items = [];
+    for (const line of lines) {
+      const match = line.match(/^- \[([ xX])\] (.*)$/);
+      if (match) {
+        items.push({ checked: match[1] !== ' ', text: match[2] });
+      } else {
+        textLines.push(line);
+      }
+    }
+    while (textLines.length && textLines[textLines.length - 1].trim() === '') textLines.pop();
+    return { text: textLines.join('\n'), items };
+  }
+
+  _buildChecklistHTML(items) {
+    const total = items.length;
+    const done = items.filter(i => i.checked).length;
+    let html = '<div class="kb-checklist">';
+    if (total > 0) {
+      const pct = Math.round((done / total) * 100);
+      html += `<div class="kb-checklist-progress"><span>${done}/${total}</span><div class="kb-checklist-bar"><div class="kb-checklist-bar-fill" style="width:${pct}%"></div></div></div>`;
+    }
+    items.forEach((item, i) => {
+      html += `<div class="kb-checklist-item${item.checked ? ' kb-checked' : ''}" data-idx="${i}">
+        <input type="checkbox" ${item.checked ? 'checked' : ''} />
+        <input type="text" value="${esc(item.text)}" />
+        <button class="kb-checklist-remove" title="Remove">&times;</button>
+      </div>`;
+    });
+    html += `<button class="kb-checklist-add" type="button">+ Add item</button>`;
+    html += '</div>';
+    return html;
+  }
+
+  _attachChecklistEvents(container, items, onUpdate) {
+    container.querySelectorAll('.kb-checklist-item input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const idx = parseInt(cb.closest('.kb-checklist-item').dataset.idx);
+        items[idx].checked = cb.checked;
+        cb.closest('.kb-checklist-item').classList.toggle('kb-checked', cb.checked);
+        onUpdate();
+      });
+    });
+    container.querySelectorAll('.kb-checklist-item input[type="text"]').forEach(input => {
+      input.addEventListener('input', () => {
+        const idx = parseInt(input.closest('.kb-checklist-item').dataset.idx);
+        items[idx].text = input.value;
+      });
+    });
+    container.querySelectorAll('.kb-checklist-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.closest('.kb-checklist-item').dataset.idx);
+        items.splice(idx, 1);
+        this._refreshChecklist(container, items, onUpdate);
+      });
+    });
+    const addBtn = container.querySelector('.kb-checklist-add');
+    if (addBtn) {
+      addBtn.addEventListener('click', () => {
+        items.push({ checked: false, text: '' });
+        this._refreshChecklist(container, items, onUpdate);
+        requestAnimationFrame(() => {
+          const newItems = container.querySelectorAll('.kb-checklist-item input[type="text"]');
+          if (newItems.length) newItems[newItems.length - 1].focus();
+        });
+      });
+    }
+  }
+
+  _refreshChecklist(container, items, onUpdate) {
+    container.innerHTML = this._buildChecklistHTML(items);
+    this._attachChecklistEvents(container, items, onUpdate);
+    onUpdate();
+  }
+
+  _rebuildDescription(parsed) {
+    let desc = parsed.text;
+    if (parsed.items.length > 0) {
+      if (desc && !desc.endsWith('\n')) desc += '\n';
+      desc += parsed.items.map(i => `- [${i.checked ? 'x' : ' '}] ${i.text}`).join('\n');
+    }
+    return desc;
+  }
+
+  _saveChecklist(taskId, newDescription) {
+    if (!this.apiClient) return;
+    this.apiClient.updateTask(taskId, { description: newDescription });
+    // Also update local task data to keep fingerprint in sync
+    const task = this.tasks.find(t => t.id === taskId);
+    if (task) task.description = newDescription;
+  }
+
+  _serializeDescription(text, items) {
+    let desc = text.trim();
+    if (items.length > 0) {
+      if (desc) desc += '\n\n';
+      desc += items.map(i => `- [${i.checked ? 'x' : ' '}] ${i.text}`).join('\n');
+    }
+    return desc;
+  }
+
   /* ─── Dispatch Form ─── */
 
   _showDispatchForm() {
@@ -1163,7 +1626,11 @@ export class KanbanBoard {
       </div>
       <div class="kb-field">
         <label>Description</label>
-        <textarea name="description" placeholder="Task description..." rows="3"></textarea>
+        <textarea name="description" placeholder="Task description..." rows="6"></textarea>
+      </div>
+      <div class="kb-field">
+        <label>Checklist</label>
+        <div class="kb-checklist-container"></div>
       </div>
       <div class="kb-field">
         <label>Priority</label>
@@ -1191,6 +1658,21 @@ export class KanbanBoard {
       </div>
     `;
 
+    // Init checklist
+    const dispatchChecklistItems = [];
+    const dispatchChecklistContainer = form.querySelector('.kb-checklist-container');
+    const updateDispatchChecklist = () => {
+      const total = dispatchChecklistItems.length;
+      const done = dispatchChecklistItems.filter(i => i.checked).length;
+      const progress = dispatchChecklistContainer.querySelector('.kb-checklist-progress');
+      if (progress) {
+        progress.querySelector('span').textContent = `${done}/${total}`;
+        progress.querySelector('.kb-checklist-bar-fill').style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+      }
+    };
+    dispatchChecklistContainer.innerHTML = this._buildChecklistHTML(dispatchChecklistItems);
+    this._attachChecklistEvents(dispatchChecklistContainer, dispatchChecklistItems, updateDispatchChecklist);
+
     // Cancel
     form.querySelector('.kb-form-btn--cancel').addEventListener('click', () => this._closeDispatchForm());
 
@@ -1198,7 +1680,8 @@ export class KanbanBoard {
     form.querySelector('.kb-form-btn--submit').addEventListener('click', () => {
       const profile = form.querySelector('[name="profile"]').value.trim();
       const title = form.querySelector('[name="title"]').value.trim();
-      const description = form.querySelector('[name="description"]').value.trim();
+      const rawDesc = form.querySelector('[name="description"]').value.trim();
+      const description = this._serializeDescription(rawDesc, dispatchChecklistItems);
       const priority = form.querySelector('[name="priority"]').value;
       const parentId = form.querySelector('[name="parent_task_id"]').value.trim();
       const goalId = form.querySelector('[name="goal_id"]').value;
@@ -1255,6 +1738,13 @@ export class KanbanBoard {
 
     const form = document.createElement('div');
     form.className = 'kb-form';
+
+    // Parse existing checklist items from description
+    const parsed = this._parseChecklist(task.description || '');
+    const editChecklistItems = [...parsed.items];
+
+    const statusOptions = ['pending', 'accepted', 'in-progress', 'done', 'blocked', 'cancelled'];
+
     form.innerHTML = `
       <h3>Edit Task</h3>
       <div class="kb-field">
@@ -1262,17 +1752,51 @@ export class KanbanBoard {
         <input type="text" name="title" value="${esc(task.title)}" autocomplete="off" />
       </div>
       <div class="kb-field">
-        <label>Description</label>
-        <textarea name="description" rows="3">${esc(task.description || '')}</textarea>
+        <label>Assigned To</label>
+        <input type="text" name="assigned_to" value="${esc(task.assigned_to || '')}" placeholder="profile-slug" autocomplete="off" />
       </div>
       <div class="kb-field">
-        <label>Priority</label>
-        <select name="priority">
-          <option value="P0"${task.priority === 'P0' ? ' selected' : ''}>P0 - Critical</option>
-          <option value="P1"${task.priority === 'P1' ? ' selected' : ''}>P1 - High</option>
-          <option value="P2"${task.priority === 'P2' ? ' selected' : ''}>P2 - Normal</option>
-          <option value="P3"${task.priority === 'P3' ? ' selected' : ''}>P3 - Low</option>
+        <label>Description</label>
+        <textarea name="description" rows="6">${esc(parsed.text)}</textarea>
+      </div>
+      <div class="kb-field">
+        <label>Checklist</label>
+        <div class="kb-checklist-container"></div>
+      </div>
+      <div class="kb-field-row">
+        <div class="kb-field">
+          <label>Priority</label>
+          <select name="priority">
+            <option value="P0"${task.priority === 'P0' ? ' selected' : ''}>P0 - Critical</option>
+            <option value="P1"${task.priority === 'P1' ? ' selected' : ''}>P1 - High</option>
+            <option value="P2"${task.priority === 'P2' ? ' selected' : ''}>P2 - Normal</option>
+            <option value="P3"${task.priority === 'P3' ? ' selected' : ''}>P3 - Low</option>
+          </select>
+        </div>
+        <div class="kb-field">
+          <label>Status</label>
+          <select name="status">
+            ${statusOptions.map(s => `<option value="${s}"${task.status === s ? ' selected' : ''}>${s}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="kb-field">
+        <label>Goal (optional)</label>
+        <select name="goal_id">
+          <option value="">— None —</option>
+          ${this.goals.map(g => `<option value="${esc(g.id)}"${task.goal_id === g.id ? ' selected' : ''}>[${esc(g.type)}] ${esc(g.title)}</option>`).join('')}
         </select>
+      </div>
+      <div class="kb-field">
+        <label>Board (optional)</label>
+        <select name="board_id">
+          <option value="">— Default —</option>
+          ${this.boards.map(b => `<option value="${esc(b.id)}"${task.board_id === b.id ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="kb-field kb-field--meta">
+        <span>ID: ${esc(task.id.slice(0, 8))}...</span>
+        <span>Created: ${task.dispatched_at ? new Date(task.dispatched_at).toLocaleDateString() : '—'}</span>
       </div>
       <div class="kb-form-btns">
         <button class="kb-form-btn kb-form-btn--cancel" type="button">Cancel</button>
@@ -1280,13 +1804,37 @@ export class KanbanBoard {
       </div>
     `;
 
+    // Init checklist
+    const editChecklistContainer = form.querySelector('.kb-checklist-container');
+    const updateEditChecklist = () => {
+      const total = editChecklistItems.length;
+      const done = editChecklistItems.filter(i => i.checked).length;
+      const progress = editChecklistContainer.querySelector('.kb-checklist-progress');
+      if (progress) {
+        progress.querySelector('span').textContent = `${done}/${total}`;
+        progress.querySelector('.kb-checklist-bar-fill').style.width = total ? `${Math.round((done / total) * 100)}%` : '0%';
+      }
+    };
+    editChecklistContainer.innerHTML = this._buildChecklistHTML(editChecklistItems);
+    this._attachChecklistEvents(editChecklistContainer, editChecklistItems, updateEditChecklist);
+
     form.querySelector('.kb-form-btn--cancel').addEventListener('click', () => this._closeDispatchForm());
     form.querySelector('.kb-form-btn--submit').addEventListener('click', () => {
       const title = form.querySelector('[name="title"]').value.trim();
-      const description = form.querySelector('[name="description"]').value.trim();
+      const rawDesc = form.querySelector('[name="description"]').value.trim();
+      const description = this._serializeDescription(rawDesc, editChecklistItems);
       const priority = form.querySelector('[name="priority"]').value;
+      const status = form.querySelector('[name="status"]').value;
+      const goalId = form.querySelector('[name="goal_id"]').value;
+      const boardId = form.querySelector('[name="board_id"]').value;
+      const assignedTo = form.querySelector('[name="assigned_to"]').value.trim();
       if (!title) return;
-      if (this.onEdit) this.onEdit(task.id, task.project || 'default', { title, description, priority });
+      const data = { title, description, priority };
+      if (status) data.status = status;
+      if (goalId) data.goal_id = goalId;
+      if (boardId) data.board_id = boardId;
+      if (assignedTo) data.assigned_to = assignedTo;
+      if (this.onEdit) this.onEdit(task.id, task.project || 'default', data);
       this._closeDispatchForm();
     });
 

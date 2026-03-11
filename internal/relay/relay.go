@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 
 	"agent-relay/internal/config"
 	"agent-relay/internal/db"
@@ -26,13 +27,14 @@ type Relay struct {
 	Events       *EventBus
 	Config       config.Config
 	httpServer   *http.Server
+	StartedAt    time.Time
 }
 
 // New creates a fully wired Relay with all tools registered.
 func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher, cfg config.Config) *Relay {
 	mcpSrv := server.NewMCPServer(
-		"agent-relay",
-		"1.0.0",
+		"wrai.th",
+		"0.5.0",
 		server.WithToolCapabilities(false),
 		server.WithLogging(),
 		server.WithRecovery(),
@@ -79,7 +81,11 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		server.ServerTool{Tool: cancelTaskTool(), Handler: handlers.HandleCancelTask},
 		server.ServerTool{Tool: getTaskTool(), Handler: handlers.HandleGetTask},
 		server.ServerTool{Tool: listTasksTool(), Handler: handlers.HandleListTasks},
+		server.ServerTool{Tool: updateTaskTool(), Handler: handlers.HandleUpdateTask},
 		server.ServerTool{Tool: archiveTasksTool(), Handler: handlers.HandleArchiveTasks},
+		server.ServerTool{Tool: moveTaskTool(), Handler: handlers.HandleMoveTask},
+		server.ServerTool{Tool: batchCompleteTasksTool(), Handler: handlers.HandleBatchCompleteTasks},
+		server.ServerTool{Tool: batchDispatchTasksTool(), Handler: handlers.HandleBatchDispatchTasks},
 		// Boards
 		server.ServerTool{Tool: createBoardTool(), Handler: handlers.HandleCreateBoard},
 		server.ServerTool{Tool: listBoardsTool(), Handler: handlers.HandleListBoards},
@@ -138,6 +144,7 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		VaultWatcher: vaultWatcher,
 		Events:       events,
 		Config:       cfg,
+		StartedAt:    time.Now().UTC(),
 	}
 }
 

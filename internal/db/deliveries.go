@@ -25,9 +25,13 @@ func (d *DB) CreateDeliveries(messageID, project string, recipients []string) er
 
 // GetInboxViaDeliveries returns messages for an agent using the deliveries table.
 // It marks returned deliveries as 'surfaced'.
-func (d *DB) GetInboxViaDeliveries(project, agentName string, unreadOnly bool, limit int) ([]models.Message, error) {
+func (d *DB) GetInboxViaDeliveries(project, agentName string, unreadOnly bool, limit int, filters ...InboxFilter) ([]models.Message, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	var f InboxFilter
+	if len(filters) > 0 {
+		f = filters[0]
 	}
 
 	query := `
@@ -44,6 +48,21 @@ func (d *DB) GetInboxViaDeliveries(project, agentName string, unreadOnly bool, l
 
 	if unreadOnly {
 		query += " AND d.state = 'queued'"
+	}
+	if f.MinPriority != "" {
+		query += " AND m.priority <= ?"
+		args = append(args, f.MinPriority)
+	}
+	if f.From != "" {
+		query += " AND m.from_agent = ?"
+		args = append(args, f.From)
+	}
+	if f.Since != "" {
+		query += " AND m.created_at >= ?"
+		args = append(args, f.Since)
+	}
+	if f.ExcludeBroadcasts {
+		query += " AND m.to_agent != '*'"
 	}
 
 	query += " ORDER BY m.priority ASC, m.created_at DESC LIMIT ?"

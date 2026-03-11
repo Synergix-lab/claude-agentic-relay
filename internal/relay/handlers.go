@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"agent-relay/internal/db"
 	"agent-relay/internal/ingest"
@@ -23,10 +25,67 @@ type Handlers struct {
 	ingester     *ingest.Ingester
 	vaultWatcher *vault.Watcher
 	events       *EventBus
+	tokenCh      chan db.TokenRecord
 }
 
-func NewHandlers(db *db.DB, registry *SessionRegistry, ingester *ingest.Ingester, vaultWatcher *vault.Watcher, events *EventBus) *Handlers {
-	return &Handlers{db: db, registry: registry, ingester: ingester, vaultWatcher: vaultWatcher, events: events}
+func NewHandlers(database *db.DB, registry *SessionRegistry, ingester *ingest.Ingester, vaultWatcher *vault.Watcher, events *EventBus) *Handlers {
+	h := &Handlers{db: database, registry: registry, ingester: ingester, vaultWatcher: vaultWatcher, events: events, tokenCh: make(chan db.TokenRecord, 256)}
+	go h.flushTokenUsage()
+	return h
+}
+
+// flushTokenUsage batches token usage records and inserts them every 5s or 50 records.
+func (h *Handlers) flushTokenUsage() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	buf := make([]db.TokenRecord, 0, 64)
+
+	flush := func() {
+		if len(buf) == 0 {
+			return
+		}
+		batch := make([]db.TokenRecord, len(buf))
+		copy(batch, buf)
+		buf = buf[:0]
+		if err := h.db.InsertTokenUsageBatch(batch); err != nil {
+			log.Printf("token usage flush error: %v", err)
+		}
+	}
+
+	for {
+		select {
+		case r, ok := <-h.tokenCh:
+			if !ok {
+				flush()
+				return
+			}
+			buf = append(buf, r)
+			if len(buf) >= 50 {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+// resultJSONTracked marshals data, records token usage, and returns the MCP result.
+func (h *Handlers) resultJSONTracked(project, agent, tool string, data any) (*mcp.CallToolResult, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("json marshal: %v", err)), nil
+	}
+	select {
+	case h.tokenCh <- db.TokenRecord{
+		Project:   project,
+		Agent:     agent,
+		Tool:      tool,
+		Bytes:     len(b),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}:
+	default:
+	}
+	return mcp.NewToolResultText(string(b)), nil
 }
 
 // HandleWhoami finds the caller's Claude Code session by grepping transcripts for a unique salt.
@@ -150,7 +209,7 @@ func (h *Handlers) HandleRegisterAgent(ctx context.Context, req mcp.CallToolRequ
 		resp["auto_admin_team"] = *autoAdminTeam
 		resp["hint"] = "You were auto-added to the 'leadership' admin team (broadcast enabled). Use send_message(to='*') to broadcast."
 	}
-	return resultJSON(resp)
+	return h.resultJSONTracked(project, name, "register_agent", resp)
 }
 
 func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -168,7 +227,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 	replyTo := optionalString(req.GetString("reply_to", ""))
 	conversationID := optionalString(req.GetString("conversation_id", ""))
 	priority := mapPriority(req.GetString("priority", "P2"))
-	ttlSeconds := req.GetInt("ttl_seconds", 3600)
+	ttlSeconds := req.GetInt("ttl_seconds", 14400)
 
 	// Support "to": "conversation:<id>" shorthand
 	if conversationID == nil && strings.HasPrefix(to, "conversation:") {
@@ -234,7 +293,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 		}
 		_ = h.db.CreateDeliveries(msg.ID, project, recipients)
 
-		return resultJSON(compactSendConfirmation(*msg))
+		return h.resultJSONTracked(project, from, "send_message", msg)
 	}
 
 	// Broadcast permission: when teams exist, only admin team members can broadcast
@@ -266,7 +325,7 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 		h.registry.Notify(project, to, from, subject, msg.ID)
 	}
 
-	return resultJSON(compactSendConfirmation(*msg))
+	return h.resultJSONTracked(project, from, "send_message", msg)
 }
 
 func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -282,7 +341,15 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 	// Expire stale messages before querying
 	h.db.ExpireMessages()
 
-	messages, err := h.db.GetInbox(project, agent, unreadOnly, limit)
+	// Build inbox filters
+	filter := db.InboxFilter{
+		MinPriority:       req.GetString("min_priority", ""),
+		From:              req.GetString("from", ""),
+		Since:             req.GetString("since", ""),
+		ExcludeBroadcasts: req.GetBool("exclude_broadcasts", false),
+	}
+
+	messages, err := h.db.GetInbox(project, agent, unreadOnly, limit, filter)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get inbox: %v", err)), nil
 	}
@@ -331,7 +398,7 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 		formatted[i] = entry
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "get_inbox", map[string]any{
 		"agent":    agent,
 		"count":    len(messages),
 		"messages": formatted,
@@ -346,7 +413,7 @@ func (h *Handlers) HandleAckDelivery(ctx context.Context, req mcp.CallToolReques
 	if err := h.db.AcknowledgeDelivery(deliveryID); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to acknowledge delivery: %v", err)), nil
 	}
-	return resultJSON(map[string]any{"acknowledged": deliveryID})
+	return h.resultJSONTracked(resolveProject(ctx, req), "", "ack_delivery", map[string]any{"acknowledged": deliveryID})
 }
 
 func (h *Handlers) HandleGetThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -363,7 +430,7 @@ func (h *Handlers) HandleGetThread(ctx context.Context, req mcp.CallToolRequest)
 		messages = []models.Message{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(resolveProject(ctx, req), "", "get_thread", map[string]any{
 		"count":    len(messages),
 		"messages": messages,
 	})
@@ -390,23 +457,25 @@ func (h *Handlers) HandleListAgents(ctx context.Context, req mcp.CallToolRequest
 		sessionByID[s.SessionID] = s
 	}
 
-	result := make([]map[string]any, 0, len(agents))
-	for _, a := range agents {
-		ca := compactAgent(a)
-		if a.SessionID != nil {
-			if s, ok := sessionByID[*a.SessionID]; ok {
-				if s.Activity != "" {
-					ca["activity"] = string(s.Activity)
-				}
-				if s.Tool != "" {
-					ca["activity_tool"] = s.Tool
-				}
-			}
-		}
-		result = append(result, ca)
+	type agentWithActivity struct {
+		models.Agent
+		Activity     string `json:"activity,omitempty"`
+		ActivityTool string `json:"activity_tool,omitempty"`
 	}
 
-	return resultJSON(map[string]any{
+	result := make([]agentWithActivity, 0, len(agents))
+	for _, a := range agents {
+		aa := agentWithActivity{Agent: a}
+		if a.SessionID != nil {
+			if s, ok := sessionByID[*a.SessionID]; ok {
+				aa.Activity = string(s.Activity)
+				aa.ActivityTool = s.Tool
+			}
+		}
+		result = append(result, aa)
+	}
+
+	return h.resultJSONTracked(project, "", "list_agents", map[string]any{
 		"count":  len(result),
 		"agents": result,
 	})
@@ -422,7 +491,7 @@ func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) 
 		if err := h.db.MarkConversationRead(convID, agent); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to mark conversation read: %v", err)), nil
 		}
-		return resultJSON(map[string]any{
+		return h.resultJSONTracked(project, agent, "mark_read", map[string]any{
 			"conversation_id": convID,
 			"marked_read":     true,
 		})
@@ -438,7 +507,7 @@ func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to mark read: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "mark_read", map[string]any{
 		"marked_read": count,
 	})
 }
@@ -477,7 +546,7 @@ func (h *Handlers) HandleCreateConversation(ctx context.Context, req mcp.CallToo
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create conversation: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "create_conversation", map[string]any{
 		"conversation": conv,
 		"members":      members,
 	})
@@ -495,7 +564,7 @@ func (h *Handlers) HandleListConversations(ctx context.Context, req mcp.CallTool
 		convs = []models.ConversationSummary{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "list_conversations", map[string]any{
 		"agent":         agent,
 		"count":         len(convs),
 		"conversations": convs,
@@ -560,7 +629,7 @@ func (h *Handlers) HandleGetConversationMessages(ctx context.Context, req mcp.Ca
 		formatted[i] = entry
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(resolveProject(ctx, req), agent, "get_conversation_messages", map[string]any{
 		"conversation_id": convID,
 		"count":           len(formatted),
 		"format":          format,
@@ -596,7 +665,7 @@ func (h *Handlers) HandleInviteToConversation(ctx context.Context, req mcp.CallT
 	// Notify the invitee
 	h.registry.Notify(project, invitee, agent, fmt.Sprintf("You were invited to conversation: %s", convID), "")
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "invite_to_conversation", map[string]any{
 		"conversation_id": convID,
 		"invited":         invitee,
 	})
@@ -630,7 +699,7 @@ func (h *Handlers) HandleLeaveConversation(ctx context.Context, req mcp.CallTool
 		Label:   convID,
 	})
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "leave_conversation", map[string]any{
 		"conversation_id": convID,
 		"left":            agent,
 	})
@@ -655,7 +724,7 @@ func (h *Handlers) HandleArchiveConversation(ctx context.Context, req mcp.CallTo
 		Label:   convID,
 	})
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "archive_conversation", map[string]any{
 		"conversation_id": convID,
 		"archived":        true,
 	})
@@ -690,6 +759,11 @@ func resolveAgent(ctx context.Context, req mcp.CallToolRequest) string {
 		return strings.ToLower(as)
 	}
 	return AgentFromContext(ctx)
+}
+
+// resolveTaskID resolves a potentially short task ID prefix to a full UUID.
+func (h *Handlers) resolveTaskID(taskID, project string) (string, error) {
+	return h.db.ResolveTaskID(taskID, project)
 }
 
 // helpers
@@ -791,8 +865,9 @@ func (h *Handlers) HandleSetMemory(ctx context.Context, req mcp.CallToolRequest)
 	layer := req.GetString("layer", "behavior")
 	tags := req.GetStringSlice("tags", nil)
 	tagsJSON := db.TagsToJSON(tags)
+	upsert := req.GetBool("upsert", true)
 
-	mem, err := h.db.SetMemory(project, agent, key, value, tagsJSON, scope, confidence, layer)
+	mem, err := h.db.SetMemory(project, agent, key, value, tagsJSON, scope, confidence, layer, upsert)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to set memory: %v", err)), nil
 	}
@@ -808,7 +883,7 @@ func (h *Handlers) HandleSetMemory(ctx context.Context, req mcp.CallToolRequest)
 	}
 	h.events.Emit(MCPEvent{Type: "memory", Action: action, Agent: agent, Project: project, Label: key})
 
-	return resultJSON(result)
+	return h.resultJSONTracked(project, agent, "set_memory", result)
 }
 
 func (h *Handlers) HandleGetMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -838,7 +913,7 @@ func (h *Handlers) HandleGetMemory(ctx context.Context, req mcp.CallToolRequest)
 		result["message"] = "Multiple values exist for this key. Use resolve_conflict to pick the truth."
 	}
 
-	return resultJSON(result)
+	return h.resultJSONTracked(project, agent, "get_memory", result)
 }
 
 func (h *Handlers) HandleSearchMemory(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -881,7 +956,7 @@ func (h *Handlers) HandleSearchMemory(ctx context.Context, req mcp.CallToolReque
 		}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "search_memory", map[string]any{
 		"query":    query,
 		"count":    len(truncated),
 		"memories": truncated,
@@ -931,7 +1006,7 @@ func (h *Handlers) HandleListMemories(ctx context.Context, req mcp.CallToolReque
 		}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "list_memories", map[string]any{
 		"count":    len(truncated),
 		"memories": truncated,
 	})
@@ -950,7 +1025,7 @@ func (h *Handlers) HandleDeleteMemory(ctx context.Context, req mcp.CallToolReque
 		return mcp.NewToolResultError(fmt.Sprintf("failed to delete memory: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "delete_memory", map[string]any{
 		"deleted": true,
 		"key":     key,
 		"scope":   scope,
@@ -976,7 +1051,7 @@ func (h *Handlers) HandleResolveConflict(ctx context.Context, req mcp.CallToolRe
 	}
 	h.events.Emit(MCPEvent{Type: "memory", Action: "resolve", Agent: agent, Project: project, Label: key})
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "resolve_conflict", map[string]any{
 		"resolved": true,
 		"memory":   winner,
 	})
@@ -1004,7 +1079,7 @@ func (h *Handlers) HandleRegisterProfile(ctx context.Context, req mcp.CallToolRe
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to register profile: %v", err)), nil
 	}
-	return resultJSON(profile)
+	return h.resultJSONTracked(project, "", "register_profile", profile)
 }
 
 func (h *Handlers) HandleGetProfile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1021,7 +1096,7 @@ func (h *Handlers) HandleGetProfile(ctx context.Context, req mcp.CallToolRequest
 	if profile == nil {
 		return mcp.NewToolResultError(fmt.Sprintf("profile not found: %s", slug)), nil
 	}
-	return resultJSON(profile)
+	return h.resultJSONTracked(project, "", "get_profile", profile)
 }
 
 func (h *Handlers) HandleListProfiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1035,7 +1110,7 @@ func (h *Handlers) HandleListProfiles(ctx context.Context, req mcp.CallToolReque
 		profiles = []models.Profile{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "list_profiles", map[string]any{
 		"count":    len(profiles),
 		"profiles": profiles,
 	})
@@ -1059,6 +1134,28 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 	parentTaskID := optionalString(req.GetString("parent_task_id", ""))
 	boardID := optionalString(req.GetString("board_id", ""))
 	goalID := optionalString(req.GetString("goal_id", ""))
+
+	// Resolve truncated board_id prefix to full UUID
+	if boardID != nil && len(*boardID) < 36 {
+		boards, _ := h.db.ListBoards(project)
+		for _, b := range boards {
+			if strings.HasPrefix(b.ID, *boardID) {
+				boardID = &b.ID
+				break
+			}
+		}
+	}
+
+	// Resolve truncated goal_id prefix to full UUID
+	if goalID != nil && len(*goalID) < 36 {
+		goals, _ := h.db.ListGoals(project, "", "", nil, 0)
+		for _, g := range goals {
+			if strings.HasPrefix(g.ID, *goalID) {
+				goalID = &g.ID
+				break
+			}
+		}
+	}
 
 	// Auto-create "human" profile if dispatching to it for the first time
 	if profile == "human" {
@@ -1096,6 +1193,21 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 		h.registry.NotifyProfile(project, profile, agent, fmt.Sprintf("[%s] %s", priority, title), task.ID)
 	}
 
+	// Auto-notification: send inbox message to agents running this profile
+	agents, _ := h.db.GetAgentsByProfile(project, profile)
+	for _, a := range agents {
+		if a.Name == agent {
+			continue // don't notify the dispatcher
+		}
+		subject := fmt.Sprintf("New task: %s", title)
+		content := fmt.Sprintf("[%s] %s\n\nTask ID: %s\nProfile: %s\nDispatched by: %s", priority, title, task.ID, profile, agent)
+		if description != "" && len(description) <= 200 {
+			content += "\n\n" + description
+		}
+		taskID := task.ID
+		h.db.InsertMessage(project, agent, a.Name, "task", subject, content, fmt.Sprintf(`{"task_id":"%s"}`, taskID), "P2", 14400, nil, nil)
+	}
+
 	h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: profile, Label: title})
 
 	resp := map[string]any{"task": task}
@@ -1120,7 +1232,7 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 		}
 	}
 
-	return resultJSON(resp)
+	return h.resultJSONTracked(project, agent, "dispatch_task", resp)
 }
 
 func (h *Handlers) HandleClaimTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1130,13 +1242,17 @@ func (h *Handlers) HandleClaimTask(ctx context.Context, req mcp.CallToolRequest)
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
 	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	task, err := h.db.ClaimTask(taskID, agent, project)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to claim task: %v", err)), nil
 	}
 	h.events.Emit(MCPEvent{Type: "task", Action: "claim", Agent: agent, Project: project, Label: task.Title})
-	return resultJSON(compactTaskConfirmation(*task))
+	return h.resultJSONTracked(project, agent, "claim_task", task)
 }
 
 func (h *Handlers) HandleStartTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1146,13 +1262,17 @@ func (h *Handlers) HandleStartTask(ctx context.Context, req mcp.CallToolRequest)
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
 	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	task, err := h.db.StartTask(taskID, agent, project)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to start task: %v", err)), nil
 	}
 	h.events.Emit(MCPEvent{Type: "task", Action: "start", Agent: agent, Project: project, Label: task.Title})
-	return resultJSON(compactTaskConfirmation(*task))
+	return h.resultJSONTracked(project, agent, "start_task", task)
 }
 
 func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1161,6 +1281,10 @@ func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolReque
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	result := optionalString(req.GetString("result", ""))
 
@@ -1198,7 +1322,7 @@ func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolReque
 		}
 	}
 
-	return resultJSON(compactTaskConfirmation(*task))
+	return h.resultJSONTracked(project, agent, "complete_task", task)
 }
 
 func (h *Handlers) HandleBlockTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1207,6 +1331,10 @@ func (h *Handlers) HandleBlockTask(ctx context.Context, req mcp.CallToolRequest)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	reason := optionalString(req.GetString("reason", ""))
 
@@ -1233,7 +1361,7 @@ func (h *Handlers) HandleBlockTask(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 
-	return resultJSON(compactTaskConfirmation(*task))
+	return h.resultJSONTracked(project, agent, "block_task", task)
 }
 
 func (h *Handlers) HandleCancelTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1242,6 +1370,10 @@ func (h *Handlers) HandleCancelTask(ctx context.Context, req mcp.CallToolRequest
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	reason := optionalString(req.GetString("reason", ""))
 
@@ -1256,6 +1388,11 @@ func (h *Handlers) HandleCancelTask(ctx context.Context, req mcp.CallToolRequest
 		reasonStr = ": " + *reason
 	}
 	h.registry.Notify(project, task.DispatchedBy, agent, fmt.Sprintf("Task cancelled: %s%s", task.Title, reasonStr), task.ID)
+
+	// Notify assigned agent (if different from canceller and dispatcher)
+	if task.AssignedTo != nil && *task.AssignedTo != agent && *task.AssignedTo != task.DispatchedBy {
+		h.registry.Notify(project, *task.AssignedTo, agent, fmt.Sprintf("Your task was cancelled: %s%s", task.Title, reasonStr), task.ID)
+	}
 
 	// If this task has a parent, check if all sibling subtasks are now complete (cancelled counts)
 	if task.ParentTaskID != nil {
@@ -1275,7 +1412,34 @@ func (h *Handlers) HandleCancelTask(ctx context.Context, req mcp.CallToolRequest
 		}
 	}
 
-	return resultJSON(compactTaskConfirmation(*task))
+	return h.resultJSONTracked(project, agent, "cancel_task", task)
+}
+
+func (h *Handlers) HandleUpdateTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	taskID := req.GetString("task_id", "")
+	if taskID == "" {
+		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	title := optionalString(req.GetString("title", ""))
+	description := optionalString(req.GetString("description", ""))
+	priority := optionalString(req.GetString("priority", ""))
+	boardID := optionalString(req.GetString("board_id", ""))
+	goalID := optionalString(req.GetString("goal_id", ""))
+
+	task, err := h.db.UpdateTaskFields(taskID, project, title, description, priority, boardID, goalID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to update task: %v", err)), nil
+	}
+
+	h.events.Emit(MCPEvent{Type: "task", Action: "update", Agent: agent, Project: project, Label: task.Title})
+	return h.resultJSONTracked(project, agent, "update_task", task)
 }
 
 func (h *Handlers) HandleArchiveTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1298,11 +1462,152 @@ func (h *Handlers) HandleArchiveTasks(ctx context.Context, req mcp.CallToolReque
 	return mcp.NewToolResultText(msg), nil
 }
 
+func (h *Handlers) HandleMoveTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	taskID := req.GetString("task_id", "")
+	if taskID == "" {
+		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	boardID := optionalString(req.GetString("board_id", ""))
+	goalID := optionalString(req.GetString("goal_id", ""))
+
+	if boardID == nil && goalID == nil {
+		return mcp.NewToolResultError("at least one of board_id or goal_id is required"), nil
+	}
+
+	// Resolve truncated board_id prefix
+	if boardID != nil && len(*boardID) > 0 && len(*boardID) < 36 {
+		boards, _ := h.db.ListBoards(project)
+		for _, b := range boards {
+			if strings.HasPrefix(b.ID, *boardID) {
+				boardID = &b.ID
+				break
+			}
+		}
+	}
+
+	// Resolve truncated goal_id prefix
+	if goalID != nil && len(*goalID) > 0 && len(*goalID) < 36 {
+		goals, _ := h.db.ListGoals(project, "", "", nil, 0)
+		for _, g := range goals {
+			if strings.HasPrefix(g.ID, *goalID) {
+				goalID = &g.ID
+				break
+			}
+		}
+	}
+
+	task, err := h.db.UpdateTaskFields(taskID, project, nil, nil, nil, boardID, goalID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to move task: %v", err)), nil
+	}
+
+	h.events.Emit(MCPEvent{Type: "task", Action: "move", Agent: agent, Project: project, Label: task.Title})
+	return h.resultJSONTracked(project, agent, "move_task", task)
+}
+
+func (h *Handlers) HandleBatchCompleteTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	tasksJSON := req.GetString("tasks", "[]")
+
+	var items []struct {
+		TaskID string  `json:"task_id"`
+		Result *string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(tasksJSON), &items); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
+	}
+	if len(items) == 0 {
+		return mcp.NewToolResultError("tasks array is empty"), nil
+	}
+
+	var completed []string
+	var errors []string
+	for _, item := range items {
+		taskID, err := h.resolveTaskID(item.TaskID, project)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", item.TaskID, err))
+			continue
+		}
+		task, err := h.db.CompleteTask(taskID, agent, project, item.Result)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", taskID, err))
+			continue
+		}
+		completed = append(completed, taskID)
+		h.events.Emit(MCPEvent{Type: "task", Action: "complete", Agent: agent, Project: project, Label: task.Title})
+	}
+
+	return h.resultJSONTracked(project, agent, "batch_complete_tasks", map[string]any{
+		"completed": completed,
+		"errors":    errors,
+		"total":     len(items),
+	})
+}
+
+func (h *Handlers) HandleBatchDispatchTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	tasksJSON := req.GetString("tasks", "[]")
+
+	var items []struct {
+		Profile     string  `json:"profile"`
+		Title       string  `json:"title"`
+		Description string  `json:"description"`
+		Priority    string  `json:"priority"`
+		BoardID     *string `json:"board_id"`
+		GoalID      *string `json:"goal_id"`
+	}
+	if err := json.Unmarshal([]byte(tasksJSON), &items); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
+	}
+	if len(items) == 0 {
+		return mcp.NewToolResultError("tasks array is empty"), nil
+	}
+
+	var dispatched []map[string]string
+	var errors []string
+	for _, item := range items {
+		if item.Profile == "" || item.Title == "" {
+			errors = append(errors, fmt.Sprintf("missing profile or title: %+v", item))
+			continue
+		}
+		priority := item.Priority
+		if priority == "" {
+			priority = "P2"
+		}
+		task, err := h.db.DispatchTask(project, item.Profile, agent, item.Title, item.Description, priority, nil, item.BoardID, item.GoalID)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", item.Title, err))
+			continue
+		}
+		dispatched = append(dispatched, map[string]string{"id": task.ID, "title": task.Title})
+		h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: item.Profile, Label: item.Title})
+	}
+
+	return h.resultJSONTracked(project, agent, "batch_dispatch_tasks", map[string]any{
+		"dispatched": dispatched,
+		"errors":     errors,
+		"total":      len(items),
+	})
+}
+
 func (h *Handlers) HandleGetTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(ctx, req)
 	taskID := req.GetString("task_id", "")
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, rErr := h.resolveTaskID(taskID, project)
+	if rErr != nil {
+		return mcp.NewToolResultError(rErr.Error()), nil
 	}
 	includeSubtasks := req.GetBool("include_subtasks", false)
 
@@ -1333,11 +1638,11 @@ func (h *Handlers) HandleGetTask(ctx context.Context, req mcp.CallToolRequest) (
 				"task":          task,
 				"goal_ancestry": goalChain,
 			}
-			return resultJSON(resp)
+			return h.resultJSONTracked(project, "", "get_task", resp)
 		}
 	}
 
-	return resultJSON(task)
+	return h.resultJSONTracked(project, "", "get_task", task)
 }
 
 func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1348,8 +1653,9 @@ func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest)
 	assignedTo := req.GetString("assigned_to", "")
 	boardID := req.GetString("board_id", "")
 	limit := req.GetInt("limit", 50)
+	includeArchived := req.GetBool("include_archived", false)
 
-	tasks, err := h.db.ListTasks(project, status, profile, priority, assignedTo, boardID, limit)
+	tasks, err := h.db.ListTasks(project, status, profile, priority, assignedTo, boardID, limit, includeArchived)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to list tasks: %v", err)), nil
 	}
@@ -1357,14 +1663,20 @@ func (h *Handlers) HandleListTasks(ctx context.Context, req mcp.CallToolRequest)
 		tasks = []models.Task{}
 	}
 
-	compact := make([]map[string]any, len(tasks))
-	for i, t := range tasks {
-		compact[i] = compactListTask(t)
+	// Truncate descriptions to save tokens in list view (use get_task for full details)
+	for i := range tasks {
+		if len(tasks[i].Description) > 200 {
+			tasks[i].Description = tasks[i].Description[:200] + "…"
+		}
+		if tasks[i].Result != nil && len(*tasks[i].Result) > 200 {
+			truncated := (*tasks[i].Result)[:200] + "…"
+			tasks[i].Result = &truncated
+		}
 	}
 
-	return resultJSON(map[string]any{
-		"count": len(compact),
-		"tasks": compact,
+	return h.resultJSONTracked(project, "", "list_tasks", map[string]any{
+		"count": len(tasks),
+		"tasks": tasks,
 	})
 }
 
@@ -1386,7 +1698,7 @@ func (h *Handlers) HandleClaimFiles(ctx context.Context, req mcp.CallToolRequest
 	content := fmt.Sprintf("%s is now editing: %s", agent, filePaths)
 	h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P1", 0, nil, nil)
 
-	return resultJSON(lock)
+	return h.resultJSONTracked(project, agent, "claim_files", lock)
 }
 
 func (h *Handlers) HandleReleaseFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1403,7 +1715,7 @@ func (h *Handlers) HandleReleaseFiles(ctx context.Context, req mcp.CallToolReque
 	content := fmt.Sprintf("%s released: %s", agent, filePaths)
 	h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P3", 3600, nil, nil)
 
-	return resultJSON(map[string]any{"released": filePaths})
+	return h.resultJSONTracked(project, agent, "release_files", map[string]any{"released": filePaths})
 }
 
 func (h *Handlers) HandleListLocks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1417,7 +1729,7 @@ func (h *Handlers) HandleListLocks(ctx context.Context, req mcp.CallToolRequest)
 		locks = []models.FileLock{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "list_locks", map[string]any{
 		"count": len(locks),
 		"locks": locks,
 	})
@@ -1437,7 +1749,7 @@ func (h *Handlers) HandleDeactivateAgent(ctx context.Context, req mcp.CallToolRe
 	}
 	h.events.Emit(MCPEvent{Type: "register", Action: "deactivate", Agent: name, Project: project})
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, name, "deactivate_agent", map[string]any{
 		"deactivated": true,
 		"agent":       name,
 	})
@@ -1457,7 +1769,7 @@ func (h *Handlers) HandleCreateBoard(ctx context.Context, req mcp.CallToolReques
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create board: %v", err)), nil
 	}
-	return resultJSON(board)
+	return h.resultJSONTracked(project, agent, "create_board", board)
 }
 
 func (h *Handlers) HandleListBoards(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1469,7 +1781,7 @@ func (h *Handlers) HandleListBoards(ctx context.Context, req mcp.CallToolRequest
 	if boards == nil {
 		boards = []models.Board{}
 	}
-	return resultJSON(boards)
+	return h.resultJSONTracked(project, "", "list_boards", boards)
 }
 
 func (h *Handlers) HandleArchiveBoard(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1509,7 +1821,7 @@ func (h *Handlers) HandleDeleteAgent(ctx context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError(fmt.Sprintf("failed to delete agent: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, name, "delete_agent", map[string]any{
 		"deleted": true,
 		"agent":   name,
 	})
@@ -1529,7 +1841,7 @@ func (h *Handlers) HandleCreateProject(ctx context.Context, req mcp.CallToolRequ
 	// Check if already configured
 	agents, _ := h.db.ListAgents(name)
 	if len(agents) > 0 {
-		return resultJSON(map[string]any{
+		return h.resultJSONTracked(resolveProject(ctx, req), name, "create_project", map[string]any{
 			"project": name,
 			"status":  "already_configured",
 			"agents":  len(agents),
@@ -1788,7 +2100,7 @@ func (h *Handlers) HandleDeleteProject(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(fmt.Sprintf("failed to delete project: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(resolveProject(ctx, req), "", "delete_project", map[string]any{
 		"deleted": true,
 		"project": project,
 	})
@@ -1803,7 +2115,7 @@ func (h *Handlers) HandleSleepAgent(ctx context.Context, req mcp.CallToolRequest
 	}
 	h.events.Emit(MCPEvent{Type: "register", Action: "sleep", Agent: agent, Project: project})
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "sleep_agent", map[string]any{
 		"status": "sleeping",
 		"agent":  agent,
 	})
@@ -1826,7 +2138,7 @@ func (h *Handlers) HandleFindProfiles(ctx context.Context, req mcp.CallToolReque
 		profiles = []models.Profile{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "find_profiles", map[string]any{
 		"skill_tag": tag,
 		"count":     len(profiles),
 		"profiles":  profiles,
@@ -1852,7 +2164,7 @@ func (h *Handlers) HandleCreateGoal(ctx context.Context, req mcp.CallToolRequest
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create goal: %v", err)), nil
 	}
 	h.events.Emit(MCPEvent{Type: "goal", Action: "create", Agent: agent, Project: project, Label: title})
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "create_goal", map[string]any{
 		"goal": goal,
 		"hint": "Goals are objectives, NOT tasks. To create actionable work items, use dispatch_task() and link them via goal_id. Goals track progress by counting linked tasks.",
 	})
@@ -1890,7 +2202,7 @@ func (h *Handlers) HandleListGoals(ctx context.Context, req mcp.CallToolRequest)
 		enriched = append(enriched, goalWithProgress{Goal: g, TotalTasks: total, DoneTasks: done, Progress: progress})
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "list_goals", map[string]any{
 		"count": len(enriched),
 		"goals": enriched,
 	})
@@ -1910,7 +2222,7 @@ func (h *Handlers) HandleGetGoal(ctx context.Context, req mcp.CallToolRequest) (
 	if gwp == nil {
 		return mcp.NewToolResultError("goal not found"), nil
 	}
-	return resultJSON(gwp)
+	return h.resultJSONTracked(project, "", "get_goal", gwp)
 }
 
 func (h *Handlers) HandleUpdateGoal(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1927,7 +2239,7 @@ func (h *Handlers) HandleUpdateGoal(ctx context.Context, req mcp.CallToolRequest
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to update goal: %v", err)), nil
 	}
-	return resultJSON(goal)
+	return h.resultJSONTracked(project, "", "update_goal", goal)
 }
 
 func (h *Handlers) HandleGetGoalCascade(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1937,398 +2249,103 @@ func (h *Handlers) HandleGetGoalCascade(ctx context.Context, req mcp.CallToolReq
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get goal cascade: %v", err)), nil
 	}
-	return resultJSON(cascade)
+	return h.resultJSONTracked(project, "", "get_goal_cascade", cascade)
 }
 
 // --- Session context ---
 
-// compactTaskConfirmation returns minimal task info for state-transition confirmations.
-func compactTaskConfirmation(t models.Task) map[string]any {
-	ct := map[string]any{
-		"id":     t.ID,
-		"title":  t.Title,
-		"status": t.Status,
-	}
-	if t.AssignedTo != nil {
-		ct["assigned_to"] = *t.AssignedTo
-	}
-	if t.BlockedReason != nil {
-		ct["blocked_reason"] = *t.BlockedReason
-	}
-	return ct
-}
-
-// compactSendConfirmation returns minimal message info after send.
-func compactSendConfirmation(m models.Message) map[string]any {
-	cm := map[string]any{
-		"id":      m.ID,
-		"to":      m.To,
-		"subject": m.Subject,
-		"status":  "sent",
-	}
-	if m.ConversationID != nil {
-		cm["conversation_id"] = *m.ConversationID
-	}
-	if m.DeliveryID != nil {
-		cm["delivery_id"] = *m.DeliveryID
-	}
-	return cm
-}
-
-// compactAgent returns a pruned agent for list views.
-func compactAgent(a models.Agent) map[string]any {
-	ca := map[string]any{
-		"name":   a.Name,
-		"status": a.Status,
-	}
-	if a.Role != "" {
-		ca["role"] = a.Role
-	}
-	if a.ReportsTo != nil {
-		ca["reports_to"] = *a.ReportsTo
-	}
-	if a.ProfileSlug != nil {
-		ca["profile_slug"] = *a.ProfileSlug
-	}
-	if a.IsExecutive {
-		ca["is_executive"] = true
-	}
-	return ca
-}
-
-// compactListTask returns a pruned task for list views (more fields than session context compact).
-func compactListTask(t models.Task) map[string]any {
-	ct := map[string]any{
-		"id":     t.ID,
-		"title":  t.Title,
-		"status": t.Status,
-	}
-	if t.Priority != "" && t.Priority != "normal" {
-		ct["priority"] = t.Priority
-	}
-	if t.AssignedTo != nil {
-		ct["assigned_to"] = *t.AssignedTo
-	}
-	if t.DispatchedBy != "" {
-		ct["dispatched_by"] = t.DispatchedBy
-	}
-	if t.ProfileSlug != "" {
-		ct["profile"] = t.ProfileSlug
-	}
-	if t.Description != "" {
-		d := t.Description
-		if len(d) > 200 {
-			d = d[:200] + "…"
-		}
-		ct["description"] = d
-	}
-	if t.Result != nil {
-		r := *t.Result
-		if len(r) > 200 {
-			r = r[:200] + "…"
-		}
-		ct["result"] = r
-	}
-	if t.BlockedReason != nil {
-		ct["blocked_reason"] = *t.BlockedReason
-	}
-	if t.GoalID != nil {
-		ct["goal_id"] = *t.GoalID
-	}
-	if t.ParentTaskID != nil {
-		ct["parent_task_id"] = *t.ParentTaskID
-	}
-	if t.BoardID != nil {
-		ct["board_id"] = *t.BoardID
-	}
-	return ct
-}
-
-// compactTask returns a pruned task for session context (strips timestamps, project, profile_slug).
-func compactTask(t models.Task) map[string]any {
-	ct := map[string]any{
-		"id":     t.ID,
-		"title":  t.Title,
-		"status": t.Status,
-	}
-	if t.Priority != "" && t.Priority != "normal" {
-		ct["priority"] = t.Priority
-	}
-	if t.AssignedTo != nil {
-		ct["assigned_to"] = *t.AssignedTo
-	}
-	if t.DispatchedBy != "" {
-		ct["dispatched_by"] = t.DispatchedBy
-	}
-	if t.Description != "" {
-		d := t.Description
-		if len(d) > 300 {
-			d = d[:300] + "…"
-		}
-		ct["description"] = d
-	}
-	if t.Result != nil {
-		r := *t.Result
-		if len(r) > 300 {
-			r = r[:300] + "…"
-		}
-		ct["result"] = r
-	}
-	if t.BlockedReason != nil {
-		ct["blocked_reason"] = *t.BlockedReason
-	}
-	if t.GoalID != nil {
-		ct["goal_id"] = *t.GoalID
-	}
-	if t.ParentTaskID != nil {
-		ct["parent_task_id"] = *t.ParentTaskID
-	}
-	if len(t.Subtasks) > 0 {
-		subs := make([]map[string]any, len(t.Subtasks))
-		for i, s := range t.Subtasks {
-			subs[i] = compactTask(s)
-		}
-		ct["subtasks"] = subs
-	}
-	return ct
-}
-
-// compactMessage returns a pruned message for session context (truncates content, strips metadata).
-func compactMessage(m models.Message) map[string]any {
-	cm := map[string]any{
-		"id":   m.ID,
-		"from": m.From,
-	}
-	if m.Subject != "" {
-		cm["subject"] = m.Subject
-	}
-	content := m.Content
-	if len(content) > 500 {
-		content = content[:500] + "…"
-	}
-	cm["content"] = content
-	if m.ConversationID != nil {
-		cm["conversation_id"] = *m.ConversationID
-	}
-	if m.TaskID != nil {
-		cm["task_id"] = *m.TaskID
-	}
-	if m.Priority != "" && m.Priority != "normal" {
-		cm["priority"] = m.Priority
-	}
-	cm["created_at"] = m.CreatedAt
-	return cm
-}
-
-// compactMemory returns a pruned memory for session context (truncates value, strips timestamps).
-func compactMemory(m models.Memory) map[string]any {
-	cm := map[string]any{
-		"key": m.Key,
-	}
-	v := m.Value
-	if len(v) > 300 {
-		v = v[:300] + "…"
-	}
-	cm["value"] = v
-	if m.Tags != "" && m.Tags != "[]" {
-		cm["tags"] = m.Tags
-	}
-	if m.Scope != "agent" {
-		cm["scope"] = m.Scope
-	}
-	return cm
-}
-
-// compactConversation returns a pruned conversation summary.
-func compactConversation(c models.ConversationSummary) map[string]any {
-	cc := map[string]any{
-		"id":    c.ID,
-		"title": c.Title,
-	}
-	if c.UnreadCount > 0 {
-		cc["unread"] = c.UnreadCount
-	}
-	if c.MemberCount > 2 {
-		cc["members"] = c.MemberCount
-	}
-	return cc
-}
-
-// compactProfile returns a pruned profile for session context (strips id, project, timestamps, vault_paths).
-func compactProfile(p models.Profile) map[string]any {
-	cp := map[string]any{
-		"slug": p.Slug,
-		"name": p.Name,
-		"role": p.Role,
-	}
-	if p.ContextPack != "" {
-		cp["context_pack"] = p.ContextPack
-	}
-	if p.SoulKeys != "" && p.SoulKeys != "[]" {
-		cp["soul_keys"] = json.RawMessage(p.SoulKeys)
-	}
-	if p.Skills != "" && p.Skills != "[]" {
-		cp["skills"] = json.RawMessage(p.Skills)
-	}
-	return cp
-}
-
-// compactGoal returns a pruned goal for session context.
-func compactGoal(g models.Goal) map[string]any {
-	cg := map[string]any{
-		"id":    g.ID,
-		"title": g.Title,
-		"type":  g.Type,
-	}
-	if g.Description != "" {
-		d := g.Description
-		if len(d) > 200 {
-			d = d[:200] + "…"
-		}
-		cg["description"] = d
-	}
-	return cg
-}
-
 func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *string) map[string]any {
 	result := map[string]any{}
 
-	// Profile (compact, single fetch — reused for vault_paths below)
-	var profile *models.Profile
+	// Profile
 	if profileSlug != nil && *profileSlug != "" {
-		p, err := h.db.GetProfile(project, *profileSlug)
-		if err == nil && p != nil {
-			profile = p
-			result["profile"] = compactProfile(*p)
+		profile, err := h.db.GetProfile(project, *profileSlug)
+		if err == nil && profile != nil {
+			result["profile"] = profile
 		}
 	}
 
-	// Tasks (compact)
+	// Tasks
 	assignedToMe, dispatchedByMe, _ := h.db.GetAgentTasks(project, agentName)
-	var compactAssigned, compactDispatched []map[string]any
+	if assignedToMe == nil {
+		assignedToMe = []models.Task{}
+	}
+	if dispatchedByMe == nil {
+		dispatchedByMe = []models.Task{}
+	}
+	// Build goal context for assigned tasks that have goal_id
 	goalContext := map[string]any{}
 	for _, t := range assignedToMe {
-		compactAssigned = append(compactAssigned, compactTask(t))
 		if t.GoalID != nil && *t.GoalID != "" {
 			if _, seen := goalContext[*t.GoalID]; !seen {
 				ancestry, _ := h.db.GetGoalAncestry(*t.GoalID, project)
 				goal, _ := h.db.GetGoal(*t.GoalID, project)
 				if goal != nil {
-					var chain []map[string]any
-					for _, a := range ancestry {
-						chain = append(chain, compactGoal(a))
+					if ancestry == nil {
+						ancestry = []models.Goal{}
 					}
-					chain = append(chain, compactGoal(*goal))
-					goalContext[*t.GoalID] = chain
+					goalContext[*t.GoalID] = append(ancestry, *goal)
 				}
 			}
 		}
 	}
-	for _, t := range dispatchedByMe {
-		compactDispatched = append(compactDispatched, compactTask(t))
-	}
 
-	tasks := map[string]any{}
-	if len(compactAssigned) > 0 {
-		tasks["assigned_to_me"] = compactAssigned
-	}
-	if len(compactDispatched) > 0 {
-		tasks["dispatched_by_me"] = compactDispatched
-	}
-	if len(tasks) > 0 {
-		result["pending_tasks"] = tasks
+	result["pending_tasks"] = map[string]any{
+		"assigned_to_me":  assignedToMe,
+		"dispatched_by_me": dispatchedByMe,
 	}
 	if len(goalContext) > 0 {
 		result["goal_context"] = goalContext
 	}
 
-	// Unread messages (index-only: metadata without content, budget-pruned)
+	// Unread messages (full content, not truncated)
 	unread, err := h.db.GetInbox(project, agentName, true, 50)
 	if err != nil || unread == nil {
 		unread = []models.Message{}
 	}
-	if len(unread) > 0 {
-		agentObj, _ := h.db.GetAgent(project, agentName)
-		if agentObj != nil {
-			var tags []string
-			json.Unmarshal([]byte(agentObj.InterestTags), &tags)
-			unread = applyBudget(unread, tags, agentObj.MaxContextBytes)
-		}
-		indexUnread := make([]map[string]any, len(unread))
-		for i, m := range unread {
-			idx := map[string]any{
-				"id":   m.ID,
-				"from": m.From,
-			}
-			if m.Subject != "" {
-				idx["subject"] = m.Subject
-			}
-			if m.Priority != "" && m.Priority != "P2" {
-				idx["priority"] = m.Priority
-			}
-			if m.ConversationID != nil {
-				idx["conversation_id"] = *m.ConversationID
-			}
-			if m.TaskID != nil {
-				idx["task_id"] = *m.TaskID
-			}
-			indexUnread[i] = idx
-		}
-		result["unread_messages"] = indexUnread
-		result["unread_hint"] = "Use get_inbox for full content"
-	}
+	result["unread_messages"] = unread
 
-	// Active conversations (compact)
+	// Active conversations
 	convs, err := h.db.ListConversations(project, agentName)
-	if err == nil && len(convs) > 0 {
-		compactConvs := make([]map[string]any, len(convs))
-		for i, c := range convs {
-			compactConvs[i] = compactConversation(c)
-		}
-		result["active_conversations"] = compactConvs
+	if err != nil || convs == nil {
+		convs = []models.ConversationSummary{}
 	}
+	result["active_conversations"] = convs
 
-	// Relevant memories (index-only: key + tags, use get_memory for values)
+	// Relevant memories (agent-scope + project-scope)
 	memories, err := h.db.ListMemories(project, "", agentName, nil, 20)
-	if err == nil && len(memories) > 0 {
-		indexMems := make([]map[string]any, len(memories))
-		for i, m := range memories {
-			idx := map[string]any{"key": m.Key}
-			if m.Tags != "" && m.Tags != "[]" {
-				idx["tags"] = m.Tags
-			}
-			if m.Scope != "agent" {
-				idx["scope"] = m.Scope
-			}
-			indexMems[i] = idx
-		}
-		result["relevant_memories"] = indexMems
+	if err != nil || memories == nil {
+		memories = []models.Memory{}
 	}
+	result["relevant_memories"] = memories
 
 	// Vault context: auto-inject docs based on profile vault_paths
-	if profile != nil && profile.VaultPaths != "" && profile.VaultPaths != "[]" {
-		var paths []string
-		if err := json.Unmarshal([]byte(profile.VaultPaths), &paths); err == nil && len(paths) > 0 {
-			// Resolve {slug} template
-			resolved := make([]string, len(paths))
-			for i, p := range paths {
-				resolved[i] = strings.ReplaceAll(p, "{slug}", *profileSlug)
-			}
+	if profileSlug != nil && *profileSlug != "" {
+		profile, _ := h.db.GetProfile(project, *profileSlug)
+		if profile != nil && profile.VaultPaths != "" && profile.VaultPaths != "[]" {
+			var paths []string
+			if err := json.Unmarshal([]byte(profile.VaultPaths), &paths); err == nil && len(paths) > 0 {
+				// Resolve {slug} template
+				resolved := make([]string, len(paths))
+				for i, p := range paths {
+					resolved[i] = strings.ReplaceAll(p, "{slug}", *profileSlug)
+				}
 
-			// Max ~4000 tokens at ~4 bytes/token
-			maxBytes := 16000
-			docs, _ := h.db.GetVaultDocsByPaths(project, resolved, maxBytes)
-			if len(docs) > 0 {
-				type vaultCtx struct {
-					Path    string `json:"path"`
-					Title   string `json:"title"`
-					Content string `json:"content"`
+				// Max ~4000 bytes (conservative estimate for ~4000 tokens)
+				maxBytes := 16000 // ~4000 tokens at ~4 bytes/token
+				docs, _ := h.db.GetVaultDocsByPaths(project, resolved, maxBytes)
+				if len(docs) > 0 {
+					type vaultCtx struct {
+						Path    string `json:"path"`
+						Title   string `json:"title"`
+						Content string `json:"content"`
+					}
+					vaultDocs := make([]vaultCtx, len(docs))
+					for i, d := range docs {
+						vaultDocs[i] = vaultCtx{Path: d.Path, Title: d.Title, Content: d.Content}
+					}
+					result["vault_context"] = vaultDocs
 				}
-				vaultDocs := make([]vaultCtx, len(docs))
-				for i, d := range docs {
-					vaultDocs[i] = vaultCtx{Path: d.Path, Title: d.Title, Content: d.Content}
-				}
-				result["vault_context"] = vaultDocs
 			}
 		}
 	}
@@ -2352,8 +2369,10 @@ func (h *Handlers) HandleGetSessionContext(ctx context.Context, req mcp.CallTool
 	}
 
 	sessionCtx := h.buildSessionContext(project, agent, profileSlugParam)
+	sessionCtx["agent"] = agent
+	sessionCtx["project"] = project
 
-	return resultJSON(sessionCtx)
+	return h.resultJSONTracked(project, agent, "get_session_context", sessionCtx)
 }
 
 // --- Soul RAG ---
@@ -2392,7 +2411,7 @@ func (h *Handlers) HandleQueryContext(ctx context.Context, req mcp.CallToolReque
 	}
 
 	// Source 2: completed tasks (implicit knowledge)
-	doneTasks, err := h.db.ListTasks(project, "done", "", "", "", "", limit)
+	doneTasks, err := h.db.ListTasks(project, "done", "", "", "", "", limit, false)
 	if err != nil {
 		doneTasks = []models.Task{}
 	}
@@ -2436,7 +2455,7 @@ func (h *Handlers) HandleQueryContext(ctx context.Context, req mcp.CallToolReque
 	// Combine and return
 	allResults := append(memResults, taskResults...)
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "query_context", map[string]any{
 		"query":   query,
 		"count":   len(allResults),
 		"results": allResults,
@@ -2458,7 +2477,7 @@ func (h *Handlers) HandleCreateOrg(ctx context.Context, req mcp.CallToolRequest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create org: %v", err)), nil
 	}
-	return resultJSON(org)
+	return h.resultJSONTracked(resolveProject(ctx, req), "", "create_org", org)
 }
 
 func (h *Handlers) HandleListOrgs(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2469,7 +2488,7 @@ func (h *Handlers) HandleListOrgs(ctx context.Context, req mcp.CallToolRequest) 
 	if orgs == nil {
 		orgs = []models.Org{}
 	}
-	return resultJSON(map[string]any{"count": len(orgs), "orgs": orgs})
+	return h.resultJSONTracked(resolveProject(ctx, req), "", "list_orgs", map[string]any{"count": len(orgs), "orgs": orgs})
 }
 
 func (h *Handlers) HandleCreateTeam(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2496,7 +2515,7 @@ func (h *Handlers) HandleCreateTeam(ctx context.Context, req mcp.CallToolRequest
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to create team: %v", err)), nil
 	}
-	return resultJSON(team)
+	return h.resultJSONTracked(project, "", "create_team", team)
 }
 
 func (h *Handlers) HandleListTeams(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2523,7 +2542,7 @@ func (h *Handlers) HandleListTeams(ctx context.Context, req mcp.CallToolRequest)
 		})
 	}
 
-	return resultJSON(map[string]any{"count": len(result), "teams": result})
+	return h.resultJSONTracked(project, "", "list_teams", map[string]any{"count": len(result), "teams": result})
 }
 
 func (h *Handlers) HandleAddTeamMember(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2552,7 +2571,7 @@ func (h *Handlers) HandleAddTeamMember(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(fmt.Sprintf("failed to add member: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "add_team_member", map[string]any{
 		"team":       teamSlug,
 		"agent_name": agentName,
 		"role":       role,
@@ -2578,7 +2597,7 @@ func (h *Handlers) HandleRemoveTeamMember(ctx context.Context, req mcp.CallToolR
 		return mcp.NewToolResultError(fmt.Sprintf("failed to remove member: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "remove_team_member", map[string]any{
 		"team":       teamSlug,
 		"agent_name": agentName,
 		"removed":    true,
@@ -2607,7 +2626,7 @@ func (h *Handlers) HandleGetTeamInbox(ctx context.Context, req mcp.CallToolReque
 		msgs = []models.Message{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "get_team_inbox", map[string]any{
 		"team":     teamSlug,
 		"count":    len(msgs),
 		"messages": msgs,
@@ -2627,7 +2646,7 @@ func (h *Handlers) HandleAddNotifyChannel(ctx context.Context, req mcp.CallToolR
 		return mcp.NewToolResultError(fmt.Sprintf("failed to add notify channel: %v", err)), nil
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, agent, "add_notify_channel", map[string]any{
 		"agent":  agent,
 		"target": target,
 		"added":  true,
@@ -2685,7 +2704,7 @@ func (h *Handlers) HandleRegisterVault(ctx context.Context, req mcp.CallToolRequ
 	if len(emptyVaultProfiles) > 0 {
 		resp["hint"] = fmt.Sprintf("Profiles with empty vault_paths: %v. Consider updating them with register_profile to auto-inject vault docs at boot.", emptyVaultProfiles)
 	}
-	return resultJSON(resp)
+	return h.resultJSONTracked(project, "", "register_vault", resp)
 }
 
 func (h *Handlers) HandleSearchVault(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2709,7 +2728,7 @@ func (h *Handlers) HandleSearchVault(ctx context.Context, req mcp.CallToolReques
 		results = []models.VaultSearchResult{}
 	}
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "search_vault", map[string]any{
 		"query":   query,
 		"count":   len(results),
 		"results": results,
@@ -2731,7 +2750,7 @@ func (h *Handlers) HandleGetVaultDoc(ctx context.Context, req mcp.CallToolReques
 		return mcp.NewToolResultError(fmt.Sprintf("vault doc not found: %s", path)), nil
 	}
 
-	return resultJSON(doc)
+	return h.resultJSONTracked(project, "", "get_vault_doc", doc)
 }
 
 func (h *Handlers) HandleListVaultDocs(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -2772,7 +2791,7 @@ func (h *Handlers) HandleListVaultDocs(ctx context.Context, req mcp.CallToolRequ
 
 	count, totalSize, _ := h.db.GetVaultStats(project)
 
-	return resultJSON(map[string]any{
+	return h.resultJSONTracked(project, "", "list_vault_docs", map[string]any{
 		"count":       len(metas),
 		"total_docs":  count,
 		"total_bytes": totalSize,

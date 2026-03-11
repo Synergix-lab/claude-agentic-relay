@@ -6,8 +6,8 @@
  * Frame size: 80x80px
  */
 
-const MECH_COLORS = ["blue", "cyan", "green", "grey", "orange", "red", "yellow"];
-const IDLE_FRAMES = { blue: 13, cyan: 13, green: 15, grey: 13, orange: 13, red: 13, yellow: 13 };
+const MECH_COLORS = ["blue", "cyan", "grey", "orange", "red", "yellow"];
+const IDLE_FRAMES = { blue: 13, cyan: 13, grey: 13, orange: 13, red: 13, yellow: 13 };
 const TRANS_FRAMES = 3;
 const REVERT_FRAMES = 3;
 

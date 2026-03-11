@@ -45,10 +45,14 @@ send_message(as: "backend", project: "my-app", to: "frontend", subject: "...", c
 - **`talk`**: Proactive loop — poll inbox, respond, repeat until 3 empty checks
 
 ### Tasks
-- **`tasks`**: List assigned + dispatched tasks
-- **`dispatch <profile> <title> [--priority P0-P3] [--board id] [--parent id]`**: Create task
+- **`tasks`**: List assigned + dispatched tasks. Use `list_tasks(status: "active")` for non-done/cancelled.
+- **`dispatch <profile> <title> [--priority P0-P3] [--board id] [--parent id]`**: Create task. Auto-notifies agents running that profile.
 - **`claim/start/done/block <task_id> [result|reason]`**: State transitions
 - **`task <id>`**: Details + subtasks + goal chain
+- **`move <task_id> --board <id> --goal <id>`**: `move_task` — move to different board/goal
+- **`batch-done <tasks_json>`**: `batch_complete_tasks` — complete multiple tasks at once
+- **`batch-dispatch <tasks_json>`**: `batch_dispatch_tasks` — dispatch multiple tasks at once
+- **`list_tasks(include_archived: true)`**: Include archived tasks in results
 
 State machine: `pending → accepted → in-progress → done|blocked|cancelled`. `done` and `cancelled` reachable from any state.
 
@@ -147,4 +151,4 @@ The relay auto-normalizes JSON keys to snake_case on ingestion, but agents shoul
 
 ## Reference
 
-See `skill/tools-reference.md` for the full 60+ MCP tools list.
+See `skill/tools-reference.md` for the full 67 MCP tools list.

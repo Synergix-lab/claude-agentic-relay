@@ -9,6 +9,12 @@ import { spaceAssets, SOLAR_PLANETS } from "./space-assets.js";
 
 export { SpaceBackground } from "./space-bg.js";
 
+function _fmtTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return String(n);
+}
+
 // Slight elliptical tilt for 3/4 perspective
 const ORBIT_TILT = 0.55;
 
@@ -48,8 +54,41 @@ export class World {
     // Orbit dust particles
     this._orbitDust = []; // { angle, orbitRadius, size, alpha, speed, drift }
 
+    // Asteroid belt
+    this._asteroids = []; // { angle, radius, speed, spriteIdx, size, alpha }
+    this._asteroidImgs = [];
+    this._asteroidsReady = false;
+    this._initAsteroidSprites();
+
     // Stats for tooltip
     this._projectStats = {};
+  }
+
+  _initAsteroidSprites() {
+    let loaded = 0;
+    const total = 16;
+    for (let i = 1; i <= total; i++) {
+      const img = new Image();
+      img.src = `img/space/asteroids/${i}.png`;
+      img.onload = () => { loaded++; if (loaded >= total) this._asteroidsReady = true; };
+      img.onerror = () => { loaded++; if (loaded >= total) this._asteroidsReady = true; };
+      this._asteroidImgs.push(img);
+    }
+  }
+
+  generateAsteroidBelt(centerX, centerY, radius) {
+    this._asteroids = [];
+    const count = 60 + Math.floor(Math.random() * 30);
+    for (let i = 0; i < count; i++) {
+      this._asteroids.push({
+        angle: Math.random() * Math.PI * 2,
+        radius: radius + (Math.random() - 0.5) * radius * 0.18, // ±9% spread
+        speed: 0.003 + Math.random() * 0.004, // slow drift
+        spriteIdx: Math.floor(Math.random() * 16),
+        size: 6 + Math.random() * 12,
+        alpha: 0.3 + Math.random() * 0.5,
+      });
+    }
   }
 
   update(dt) {
@@ -91,7 +130,11 @@ export class World {
         p.cx = this.sunCenter.cx + Math.cos(p.angle) * p.orbitRadius;
         p.cy = this.sunCenter.cy + Math.sin(p.angle) * (p.orbitRadius * ORBIT_TILT);
       }
+    }
 
+    // Advance asteroid belt
+    for (const a of this._asteroids) {
+      a.angle += a.speed * dt;
     }
   }
 
@@ -102,29 +145,35 @@ export class World {
     if (this.sunCenter && this.projectPlanets.length > 0) {
       const { cx, cy } = this.sunCenter;
 
-      // --- Orbit rings + arc trail ---
-      for (let i = 0; i < this.projectPlanets.length; i++) {
-        const p = this.projectPlanets[i];
-        const alpha = 0.04 + 0.03 * (i / this.projectPlanets.length);
+      // --- Orbit rings (one per distinct radius) + arc trails ---
+      // Deduplicate orbit radii to draw one ring per orbital lane
+      const drawnRadii = new Set();
+      for (const p of this.projectPlanets) {
+        const rKey = Math.round(p.orbitRadius);
+        if (!drawnRadii.has(rKey)) {
+          drawnRadii.add(rKey);
+          ctx.save();
+          ctx.lineWidth = 0.6;
+          ctx.strokeStyle = "rgba(255, 200, 60, 0.06)";
+          ctx.setLineDash([4, 8]);
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, p.orbitRadius, p.orbitRadius * ORBIT_TILT, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+      }
 
-        // Full orbit ellipse
-        ctx.save();
-        ctx.lineWidth = 0.8;
-        ctx.strokeStyle = `rgba(255, 200, 60, ${alpha * 1.5})`;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, p.orbitRadius, p.orbitRadius * ORBIT_TILT, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-
-        // Arc glow trail behind planet (manual ellipse arc)
-        const trailLen = 0.5; // radians of trail
-        const steps = 24;
+      // Arc glow trail behind each planet
+      for (const p of this.projectPlanets) {
+        const trailLen = 0.4;
+        const steps = 16;
         ctx.save();
         ctx.lineCap = "round";
         for (let s = 0; s < steps; s++) {
           const t0 = p.angle - trailLen + (trailLen * s) / steps;
           const t1 = p.angle - trailLen + (trailLen * (s + 1)) / steps;
-          const progress = (s + 1) / steps; // 0->1 from tail to head
+          const progress = (s + 1) / steps;
           ctx.beginPath();
           ctx.moveTo(
             cx + Math.cos(t0) * p.orbitRadius,
@@ -134,11 +183,26 @@ export class World {
             cx + Math.cos(t1) * p.orbitRadius,
             cy + Math.sin(t1) * (p.orbitRadius * ORBIT_TILT)
           );
-          ctx.strokeStyle = `rgba(255, 210, 80, ${progress * 0.2})`;
-          ctx.lineWidth = 2 + progress * 2;
+          ctx.strokeStyle = `rgba(255, 210, 80, ${progress * 0.15})`;
+          ctx.lineWidth = 1.5 + progress * 1.5;
           ctx.stroke();
         }
         ctx.restore();
+      }
+
+      // --- Asteroid belt ---
+      if (this._asteroidsReady && this._asteroids.length > 0) {
+        for (const a of this._asteroids) {
+          const ax = cx + Math.cos(a.angle) * a.radius;
+          const ay = cy + Math.sin(a.angle) * (a.radius * ORBIT_TILT);
+          const img = this._asteroidImgs[a.spriteIdx];
+          if (img && img.complete) {
+            ctx.save();
+            ctx.globalAlpha = a.alpha;
+            ctx.drawImage(img, ax - a.size / 2, ay - a.size / 2, a.size, a.size);
+            ctx.restore();
+          }
+        }
       }
 
       // --- Sun (founder) at center ---
@@ -278,6 +342,13 @@ export class World {
             ctx.fillRect(barX, barY, barW * progress, barH);
           }
         }
+
+        // Token usage badge — only shown on hover to keep galaxy clean
+        if (isHovered && stats && stats.tokens_24h > 0) {
+          ctx.font = "bold 9px 'JetBrains Mono', monospace";
+          ctx.fillStyle = "rgba(255, 217, 61, 0.8)";
+          ctx.fillText(_fmtTokens(stats.tokens_24h) + " tk", p.cx, p.cy + size / 2 + 44);
+        }
         ctx.restore();
       }
 
@@ -295,6 +366,9 @@ export class World {
             `${stats.total} agents (${stats.online} online)`,
             `${stats.tasks} tasks (${stats.active} active, ${stats.done} done)`,
           ];
+          if (stats.tokens_24h > 0) {
+            lines.push(`${_fmtTokens(stats.tokens_24h)} tokens (24h)`);
+          }
           ctx.save();
           ctx.font = "bold 11px 'JetBrains Mono', monospace";
           const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
@@ -315,7 +389,8 @@ export class World {
           ctx.textAlign = "left";
           for (let i = 0; i < lines.length; i++) {
             ctx.font = i === 0 ? "bold 11px 'JetBrains Mono', monospace" : "10px 'JetBrains Mono', monospace";
-            ctx.fillStyle = i === 0 ? "#ffd250" : "rgba(224, 224, 232, 0.7)";
+            const isTokenLine = lines[i].includes("tokens (24h)");
+            ctx.fillStyle = i === 0 ? "#ffd250" : isTokenLine ? "rgba(255, 217, 61, 0.7)" : "rgba(224, 224, 232, 0.7)";
             ctx.fillText(lines[i], bx + padX, by + padY + (i + 1) * lineH - 3);
           }
           ctx.restore();

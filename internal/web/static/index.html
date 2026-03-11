@@ -23,6 +23,22 @@
       <span class="header-sep"></span>
       <span id="colony-project-name" class="colony-project-name"></span>
       <span id="agent-count" class="agent-count">0 agents</span>
+      <div id="colony-token-widget" class="colony-token-widget">
+        <div class="token-widget-icon">◆</div>
+        <span id="colony-token-value" class="colony-token-value">0</span>
+        <span class="colony-token-unit">tk</span>
+        <span class="colony-token-sep">·</span>
+        <span id="colony-token-calls" class="colony-token-calls">0</span>
+        <span class="colony-token-unit">calls</span>
+        <div class="token-period-pills" id="token-period-pills">
+          <button class="token-pill" data-period="1h">1h</button>
+          <button class="token-pill" data-period="6h">6h</button>
+          <button class="token-pill" data-period="12h">12h</button>
+          <button class="token-pill active" data-period="24h">24h</button>
+          <button class="token-pill" data-period="7d">7d</button>
+          <button class="token-pill" data-period="30d">30d</button>
+        </div>
+      </div>
       <span class="header-sep"></span>
       <div class="mode-toggle">
         <button class="mode-btn active" data-mode="canvas" title="Agents [1]">
@@ -198,6 +214,16 @@
       <div class="dp-section-header" data-toggle="dp-tasks-body">TASKS</div>
       <div id="dp-tasks-body" class="dp-section-body">
         <div id="detail-tasks" class="detail-value"></div>
+      </div>
+    </div>
+
+    <!-- Token usage -->
+    <div class="dp-section">
+      <div class="dp-section-header" data-toggle="dp-tokens-body">TOKEN USAGE</div>
+      <div id="dp-tokens-body" class="dp-section-body">
+        <svg id="detail-sparkline" class="detail-sparkline" viewBox="0 0 240 48" preserveAspectRatio="none"></svg>
+        <div id="detail-token-grid" class="token-grid"></div>
+        <div id="detail-token-tools" class="token-tools-list"></div>
       </div>
     </div>
 

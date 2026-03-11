@@ -195,11 +195,11 @@ func TestSendAndGetInbox(t *testing.T) {
 		"content": "hello bot-b",
 	}))
 	msg := parseJSON(t, sendRes)
-	if msg["status"] != "sent" {
-		t.Errorf("expected status=sent, got %v", msg["status"])
-	}
 	if msg["to"] != "bot-b" {
 		t.Errorf("expected to=bot-b, got %v", msg["to"])
+	}
+	if msg["id"] == nil {
+		t.Errorf("expected message id in response")
 	}
 
 	// Check inbox
@@ -916,9 +916,9 @@ func TestMemoryConflictAndResolve(t *testing.T) {
 		"project": "p1", "as": "bot-a", "key": "db_host", "value": "localhost",
 	}))
 
-	// Agent B sets the same key with different value → conflict
+	// Agent B sets the same key with different value → conflict (upsert=false)
 	setRes, _ := h.HandleSetMemory(ctx, call(map[string]any{
-		"project": "p1", "as": "bot-b", "key": "db_host", "value": "prod-db.internal",
+		"project": "p1", "as": "bot-b", "key": "db_host", "value": "prod-db.internal", "upsert": false,
 	}))
 	setData := parseJSON(t, setRes)
 	if setData["conflict"] != true {

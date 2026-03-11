@@ -390,6 +390,16 @@ export class APIClient {
     }
   }
 
+  async fetchBoards(project) {
+    try {
+      const res = await fetch(`/api/boards?project=${encodeURIComponent(project)}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
   async fetchAllBoards() {
     try {
       const res = await fetch("/api/boards/all");
@@ -572,5 +582,41 @@ export class APIClient {
     } catch {
       return null;
     }
+  }
+
+  async fetchTokenUsage(period = "24h") {
+    try {
+      const res = await fetch(`/api/token-usage?period=${encodeURIComponent(period)}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
+  }
+
+  async fetchTokenUsageByProject(project, period = "24h") {
+    try {
+      const res = await fetch(`/api/token-usage/project?project=${encodeURIComponent(project)}&period=${encodeURIComponent(period)}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
+  }
+
+  async fetchTokenUsageByAgent(project, agent, period = "24h") {
+    try {
+      const qs = `project=${encodeURIComponent(project)}&period=${encodeURIComponent(period)}`;
+      const agentQs = agent ? `&agent=${encodeURIComponent(agent)}` : "";
+      const res = await fetch(`/api/token-usage/agent?${qs}${agentQs}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
+  }
+
+  async fetchTokenTimeSeries(project, period = "24h", agent = "") {
+    try {
+      let qs = `project=${encodeURIComponent(project)}&period=${encodeURIComponent(period)}`;
+      if (agent) qs += `&agent=${encodeURIComponent(agent)}`;
+      const res = await fetch(`/api/token-usage/timeseries?${qs}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
   }
 }

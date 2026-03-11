@@ -233,7 +233,7 @@ func (d *DB) getSubtasks(parentID, project string, depth, maxDepth int) ([]model
 func (d *DB) GetAgentTasks(project, agentName string) (assignedToMe []models.Task, dispatchedByMe []models.Task, err error) {
 	// Assigned to me (active tasks) — close rows before next query
 	assignedToMe, err = d.queryTasks(
-		"SELECT "+taskColumns+" FROM tasks WHERE assigned_to = ? AND project = ? AND status IN ('pending','accepted','in-progress') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END",
+		"SELECT "+taskColumns+" FROM tasks WHERE assigned_to = ? AND project = ? AND archived_at IS NULL AND status IN ('pending','accepted','in-progress') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END",
 		agentName, project,
 	)
 	if err != nil {
@@ -242,7 +242,7 @@ func (d *DB) GetAgentTasks(project, agentName string) (assignedToMe []models.Tas
 
 	// Also get pending tasks for my profile
 	pending, err := d.queryTasks(
-		`SELECT `+taskColumns+` FROM tasks WHERE project = ? AND status = 'pending' AND assigned_to IS NULL
+		`SELECT `+taskColumns+` FROM tasks WHERE project = ? AND archived_at IS NULL AND status = 'pending' AND assigned_to IS NULL
 		 AND profile_slug IN (SELECT profile_slug FROM agents WHERE name = ? AND project = ? AND profile_slug IS NOT NULL)
 		 ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END`,
 		project, agentName, project,
@@ -253,7 +253,7 @@ func (d *DB) GetAgentTasks(project, agentName string) (assignedToMe []models.Tas
 
 	// Dispatched by me (not done)
 	dispatchedByMe, err = d.queryTasks(
-		"SELECT "+taskColumns+" FROM tasks WHERE dispatched_by = ? AND project = ? AND status != 'done' ORDER BY dispatched_at DESC",
+		"SELECT "+taskColumns+" FROM tasks WHERE dispatched_by = ? AND project = ? AND archived_at IS NULL AND status != 'done' ORDER BY dispatched_at DESC",
 		agentName, project,
 	)
 	if err != nil {
@@ -285,7 +285,7 @@ func (d *DB) queryTasks(query string, args ...any) ([]models.Task, error) {
 func (d *DB) GetUnackedTasks(minAge time.Duration) ([]models.Task, error) {
 	cutoff := time.Now().UTC().Add(-minAge).Format(memoryTimeFmt)
 	rows, err := d.ro().Query(
-		"SELECT "+taskColumns+" FROM tasks WHERE status = 'pending' AND dispatched_at < ?",
+		"SELECT "+taskColumns+" FROM tasks WHERE status = 'pending' AND archived_at IS NULL AND dispatched_at < ?",
 		cutoff,
 	)
 	if err != nil {
@@ -338,15 +338,21 @@ func (d *DB) GetParentChain(taskID, project string) ([]models.Task, error) {
 	return chain, nil
 }
 
-func (d *DB) ListTasks(project, status, profileSlug, priority, assignedTo, boardID string, limit int) ([]models.Task, error) {
+func (d *DB) ListTasks(project, status, profileSlug, priority, assignedTo, boardID string, limit int, includeArchived bool) ([]models.Task, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	query := "SELECT " + taskColumns + " FROM tasks WHERE project = ? AND archived_at IS NULL"
+	query := "SELECT " + taskColumns + " FROM tasks WHERE project = ?"
 	args := []any{project}
 
-	if status != "" {
+	if !includeArchived {
+		query += " AND archived_at IS NULL"
+	}
+
+	if status == "active" {
+		query += " AND status NOT IN ('done', 'cancelled')"
+	} else if status != "" {
 		query += " AND status = ?"
 		args = append(args, status)
 	}
@@ -411,7 +417,7 @@ func (d *DB) ListAllTasks(limit int) ([]models.Task, error) {
 	return tasks, rows.Err()
 }
 
-func (d *DB) UpdateTaskFields(taskID, project string, title, description, priority *string) (*models.Task, error) {
+func (d *DB) UpdateTaskFields(taskID, project string, title, description, priority, boardID, goalID *string) (*models.Task, error) {
 	task, err := d.GetTask(taskID, project)
 	if err != nil {
 		return nil, err
@@ -429,10 +435,16 @@ func (d *DB) UpdateTaskFields(taskID, project string, title, description, priori
 	if priority != nil {
 		task.Priority = *priority
 	}
+	if boardID != nil {
+		task.BoardID = boardID
+	}
+	if goalID != nil {
+		task.GoalID = goalID
+	}
 
 	_, err = d.conn.Exec(
-		"UPDATE tasks SET title = ?, description = ?, priority = ? WHERE id = ? AND project = ?",
-		task.Title, task.Description, task.Priority, taskID, project,
+		"UPDATE tasks SET title = ?, description = ?, priority = ?, board_id = ?, goal_id = ? WHERE id = ? AND project = ?",
+		task.Title, task.Description, task.Priority, task.BoardID, task.GoalID, taskID, project,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update task: %w", err)
@@ -534,6 +546,35 @@ func (d *DB) ArchiveTasks(project, status, boardID string) (int64, error) {
 		return 0, fmt.Errorf("archive tasks: %w", err)
 	}
 	return result.RowsAffected()
+}
+
+// ResolveTaskID resolves a short task ID prefix to a full UUID.
+// Returns the full ID if exactly one match is found, or the original if it's already a full UUID.
+func (d *DB) ResolveTaskID(prefix, project string) (string, error) {
+	// If it looks like a full UUID (36 chars), skip prefix search
+	if len(prefix) >= 36 {
+		return prefix, nil
+	}
+	var ids []string
+	rows, err := d.ro().Query("SELECT id FROM tasks WHERE id LIKE ? AND project = ?", prefix+"%", project)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return prefix, nil // let downstream report "not found"
+	}
+	if len(ids) > 1 {
+		return "", fmt.Errorf("ambiguous task ID prefix %q (%d matches)", prefix, len(ids))
+	}
+	return ids[0], nil
 }
 
 func normalizePtr(s *string) *string {
