@@ -99,14 +99,6 @@ func truncate(s string, n int) string {
 	return s[:n-3] + "..."
 }
 
-// padRight pads s with spaces to width n.
-func padRight(s string, n int) string {
-	if len(s) >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-len(s))
-}
-
 // printTable prints rows as an aligned table.
 // Each row is a slice of strings; the first row is treated as the header.
 func printTable(rows [][]string) {

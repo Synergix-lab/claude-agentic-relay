@@ -5,13 +5,13 @@ import "time"
 type EventType string
 
 const (
-	EventToolStart    EventType = "tool_start"
-	EventToolEnd      EventType = "tool_end"
-	EventStop         EventType = "stop"
-	EventAgentSpawn   EventType = "agent_spawn"
-	EventAgentExit    EventType = "agent_exit"
-	EventIdle         EventType = "idle"
-	EventWaiting      EventType = "waiting"
+	EventToolStart  EventType = "tool_start"
+	EventToolEnd    EventType = "tool_end"
+	EventStop       EventType = "stop"
+	EventAgentSpawn EventType = "agent_spawn"
+	EventAgentExit  EventType = "agent_exit"
+	EventIdle       EventType = "idle"
+	EventWaiting    EventType = "waiting"
 )
 
 type Activity string

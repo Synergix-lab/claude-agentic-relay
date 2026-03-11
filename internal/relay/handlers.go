@@ -2291,7 +2291,7 @@ func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *s
 	}
 
 	result["pending_tasks"] = map[string]any{
-		"assigned_to_me":  assignedToMe,
+		"assigned_to_me":   assignedToMe,
 		"dispatched_by_me": dispatchedByMe,
 	}
 	if len(goalContext) > 0 {

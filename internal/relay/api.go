@@ -327,7 +327,6 @@ func (r *Relay) apiGetAgents(w http.ResponseWriter, req *http.Request) {
 			IsExecutive:  a.IsExecutive,
 			SessionID:    a.SessionID,
 			Teams:        teamsByAgent[key],
-
 		}
 		online := false
 		if t, err := time.Parse(time.RFC3339, a.LastSeen); err == nil {
@@ -398,7 +397,6 @@ func (r *Relay) apiGetAllAgents(w http.ResponseWriter) {
 			IsExecutive:  a.IsExecutive,
 			SessionID:    a.SessionID,
 			Teams:        teamsByAgent[a.Project+":"+a.Name],
-
 		}
 		if a.SessionID != nil {
 			if s, ok := actMap[*a.SessionID]; ok {
@@ -787,7 +785,7 @@ type sseAgent struct {
 	Name         string  `json:"name"`
 	Project      string  `json:"project"`
 	Role         string  `json:"role"`
-	Status       string  `json:"status"`       // busy, active, sleeping, inactive, deleted
+	Status       string  `json:"status"`        // busy, active, sleeping, inactive, deleted
 	Activity     string  `json:"activity"`      // typing, reading, terminal, browsing, thinking, waiting, idle
 	ActivityTool string  `json:"activity_tool"` // tool name when busy
 	SessionID    *string `json:"session_id,omitempty"`

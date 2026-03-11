@@ -7,13 +7,13 @@ import (
 
 // MCPEvent represents a visual event triggered by an MCP tool call.
 type MCPEvent struct {
-	Type    string `json:"type"`              // event group: memory, task, register, sleep, vault, goal, team
-	Action  string `json:"action"`            // specific action: set, search, dispatch, claim, complete, block, etc.
-	Agent   string `json:"agent"`             // agent that triggered it
-	Project string `json:"project"`           // project scope
-	Target  string `json:"target,omitempty"`  // target agent/profile (for dispatch, team ops)
-	Label   string `json:"label,omitempty"`   // short label (task title, memory key, etc.)
-	TS      int64  `json:"ts"`                // unix ms
+	Type    string `json:"type"`             // event group: memory, task, register, sleep, vault, goal, team
+	Action  string `json:"action"`           // specific action: set, search, dispatch, claim, complete, block, etc.
+	Agent   string `json:"agent"`            // agent that triggered it
+	Project string `json:"project"`          // project scope
+	Target  string `json:"target,omitempty"` // target agent/profile (for dispatch, team ops)
+	Label   string `json:"label,omitempty"`  // short label (task title, memory key, etc.)
+	TS      int64  `json:"ts"`               // unix ms
 }
 
 // EventBus broadcasts MCP events to SSE subscribers.

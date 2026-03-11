@@ -204,8 +204,8 @@ func TestSendAndGetInbox(t *testing.T) {
 
 	// Check inbox
 	inboxRes, _ := h.HandleGetInbox(ctx, call(map[string]any{
-		"project":    "p1",
-		"as":         "bot-b",
+		"project":     "p1",
+		"as":          "bot-b",
 		"unread_only": true,
 	}))
 	inbox := parseJSON(t, inboxRes)

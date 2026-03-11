@@ -7,11 +7,11 @@ import (
 )
 
 const (
-	waitingThreshold  = 10 * time.Second
-	idleThreshold     = 30 * time.Second
-	exitThreshold     = 5 * time.Minute
-	tickInterval      = 2 * time.Second
-	minDisplayTime    = 1500 * time.Millisecond // activity visible for at least 1.5s
+	waitingThreshold = 10 * time.Second
+	idleThreshold    = 30 * time.Second
+	exitThreshold    = 5 * time.Minute
+	tickInterval     = 2 * time.Second
+	minDisplayTime   = 1500 * time.Millisecond // activity visible for at least 1.5s
 )
 
 type SessionState struct {
@@ -120,14 +120,15 @@ func (d *Detector) RecordEvent(evt AgentEvent) {
 
 	now := time.Now()
 
-	if evt.Type == EventStop {
+	switch evt.Type {
+	case EventStop:
 		// Agent turn ended → waiting for user input (always immediate)
 		s.tool = ""
 		s.activity = ActivityWaiting
 		s.state = "waiting"
 		s.displayUntil = time.Time{}
 		s.pendingType = ""
-	} else if evt.Type == EventToolEnd {
+	case EventToolEnd:
 		// Tool finished — but keep current activity visible for minDisplayTime
 		if now.Before(s.displayUntil) {
 			s.pendingType = EventToolEnd
@@ -137,7 +138,7 @@ func (d *Detector) RecordEvent(evt AgentEvent) {
 			s.activity = ActivityThinking
 			s.state = "thinking"
 		}
-	} else {
+	default:
 		// tool_start — new activity always wins, set minimum display
 		s.tool = evt.Tool
 		s.activity = evt.Activity

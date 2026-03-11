@@ -1,0 +1,50 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  build-tags:
+    - fts5
+
+formatters:
+  enable:
+    - goimports
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - revive
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Tests: setup calls don't need error checks
+    - path: _test\.go
+      linters:
+        - errcheck
+    # defer cleanup: idiomatic Go, errors not actionable
+    - linters:
+        - errcheck
+      source: "^\\s*defer "
+    # PRAGMA and DDL: fire-and-forget at startup
+    - linters:
+        - errcheck
+      source: "PRAGMA|CREATE TABLE|CREATE INDEX|CREATE UNIQUE|ALTER TABLE"
+    # stdout/stderr writes
+    - linters:
+        - errcheck
+      source: "fmt\\.Fprint"

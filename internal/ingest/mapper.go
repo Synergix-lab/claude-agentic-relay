@@ -31,19 +31,19 @@ var toolActivityMap = map[string]Activity{
 	"WebFetch":   ActivityBrowsing,
 
 	// Thinking — meta/orchestration tools
-	"ToolSearch":       ActivityThinking,
-	"Agent":            ActivityThinking,
-	"AskUserQuestion":  ActivityWaiting,
-	"Skill":            ActivityThinking,
-	"EnterPlanMode":    ActivityThinking,
-	"ExitPlanMode":     ActivityThinking,
-	"EnterWorktree":    ActivityThinking,
-	"TaskCreate":       ActivityThinking,
-	"TaskUpdate":       ActivityThinking,
-	"TaskGet":          ActivityThinking,
-	"TaskList":         ActivityThinking,
-	"TaskOutput":       ActivityReading,
-	"TaskStop":         ActivityTerminal,
+	"ToolSearch":      ActivityThinking,
+	"Agent":           ActivityThinking,
+	"AskUserQuestion": ActivityWaiting,
+	"Skill":           ActivityThinking,
+	"EnterPlanMode":   ActivityThinking,
+	"ExitPlanMode":    ActivityThinking,
+	"EnterWorktree":   ActivityThinking,
+	"TaskCreate":      ActivityThinking,
+	"TaskUpdate":      ActivityThinking,
+	"TaskGet":         ActivityThinking,
+	"TaskList":        ActivityThinking,
+	"TaskOutput":      ActivityReading,
+	"TaskStop":        ActivityTerminal,
 }
 
 // MapToolToActivity returns the activity for a known tool.

@@ -113,10 +113,11 @@ func deliveryStateFromReads(tx *sql.Tx, msgID, agentName string) string {
 func insertDelivery(tx *sql.Tx, msgID, toAgent, state, now, project string) {
 	var ackedAt *string
 	var surfacedAt *string
-	if state == "acknowledged" {
+	switch state {
+	case "acknowledged":
 		ackedAt = &now
 		surfacedAt = &now
-	} else if state == "surfaced" {
+	case "surfaced":
 		surfacedAt = &now
 	}
 	tx.Exec(

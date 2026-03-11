@@ -82,7 +82,7 @@ func (d *DB) GetMessagesSince(project, since string, limit int) ([]models.Messag
 
 // ListAllAgents returns all agents across all projects, ordered by project then name.
 func (d *DB) ListAllAgents() ([]models.Agent, error) {
-	rows, err := d.ro().Query("SELECT "+agentColumns+" FROM agents WHERE status IN ('active', 'sleeping', 'inactive') ORDER BY project, name")
+	rows, err := d.ro().Query("SELECT " + agentColumns + " FROM agents WHERE status IN ('active', 'sleeping', 'inactive') ORDER BY project, name")
 	if err != nil {
 		return nil, fmt.Errorf("list all agents: %w", err)
 	}
