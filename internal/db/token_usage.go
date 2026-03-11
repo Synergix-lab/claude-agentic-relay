@@ -33,13 +33,13 @@ func (d *DB) InsertTokenUsageBatch(records []TokenRecord) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare("INSERT INTO token_usage (project, agent, tool, bytes, created_at) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, r := range records {
 		if _, err := stmt.Exec(r.Project, r.Agent, r.Tool, r.Bytes, r.CreatedAt); err != nil {
@@ -62,7 +62,7 @@ func (d *DB) GetTokenUsageByProject(since string) ([]TokenUsageSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []TokenUsageSummary
 	for rows.Next() {
@@ -87,7 +87,7 @@ func (d *DB) GetTokenUsageByAgent(project, since string) ([]TokenUsageSummary, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []TokenUsageSummary
 	for rows.Next() {
@@ -116,7 +116,7 @@ func (d *DB) GetTokenUsageByTool(project, agent, since string) ([]TokenUsageSumm
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []TokenUsageSummary
 	for rows.Next() {
@@ -152,7 +152,7 @@ func (d *DB) GetProjectTokens24h() (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]int64)
 	for rows.Next() {
@@ -202,7 +202,7 @@ func (d *DB) GetTokenTimeSeries(project, agent, since, bucket string) ([]TokenTi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []TokenTimeBucket
 	for rows.Next() {

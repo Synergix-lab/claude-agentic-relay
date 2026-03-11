@@ -16,7 +16,7 @@ func runConversations(args []string) {
 	agentName := rest[0]
 
 	d := openDB()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	convs, err := d.ListConversations(project, agentName)
 	if err != nil {

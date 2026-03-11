@@ -14,12 +14,12 @@ func NewTestDB(path string) (*DB, error) {
 	}
 	conn.SetMaxOpenConns(1)
 	if err := migrate(conn); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	reader, err := sql.Open("sqlite3", path+"?mode=ro&_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON")
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	reader.SetMaxOpenConns(10)

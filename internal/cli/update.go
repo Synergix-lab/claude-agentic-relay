@@ -112,7 +112,7 @@ func getLatestVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
@@ -185,7 +185,7 @@ func tryBuildUpdate(binPath, version string) bool {
 	if err != nil {
 		return false
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	fmt.Print("  cloning... ")
 	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", version,
@@ -228,7 +228,7 @@ func tryDownloadUpdate(binPath, version string) bool {
 	if err != nil {
 		return false
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	fmt.Print("  downloading... ")
 	archivePath := filepath.Join(tmpDir, archiveName)
@@ -274,12 +274,12 @@ func restartService() {
 		}
 		uid := os.Getuid()
 		// Stop
-		exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", uid), plist).Run()
+		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", uid), plist).Run()
 		// Small delay for clean shutdown
 		time.Sleep(500 * time.Millisecond)
 		// Start
 		if err := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", uid), plist).Run(); err != nil {
-			exec.Command("launchctl", "load", plist).Run()
+			_ = exec.Command("launchctl", "load", plist).Run()
 		}
 		fmt.Println("ok (launchd)")
 
@@ -289,7 +289,7 @@ func restartService() {
 			fmt.Println("no service found (manual start)")
 			return
 		}
-		exec.Command("systemctl", "--user", "restart", binaryName).Run()
+		_ = exec.Command("systemctl", "--user", "restart", binaryName).Run()
 		fmt.Println("ok (systemd)")
 
 	default:

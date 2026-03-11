@@ -32,7 +32,7 @@ func runMemories(args []string) {
 	}
 
 	d := openDB()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	// Show stats header
 	total, conflicts, err := d.MemoryStats(project)
@@ -126,7 +126,7 @@ func runMemories(args []string) {
 
 		tagsStr := ""
 		var tagSlice []string
-		json.Unmarshal([]byte(m.Tags), &tagSlice)
+		_ = json.Unmarshal([]byte(m.Tags), &tagSlice)
 		if len(tagSlice) > 0 {
 			for i, t := range tagSlice {
 				if i > 0 {

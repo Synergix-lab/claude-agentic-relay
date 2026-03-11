@@ -15,7 +15,7 @@ func runInbox(args []string) {
 
 	agent := rest[0]
 	d := openDB()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	messages, err := d.GetInbox(project, agent, true, 50)
 	if err != nil {

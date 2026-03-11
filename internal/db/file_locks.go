@@ -47,7 +47,7 @@ func (d *DB) ReleaseFiles(project, agentName, filePaths string) error {
 // ListFileLocks returns active (non-released, non-expired) file locks for a project.
 func (d *DB) ListFileLocks(project string) ([]models.FileLock, error) {
 	// Expire stale locks first
-	d.ExpireFileLocks()
+	_, _ = d.ExpireFileLocks()
 
 	rows, err := d.ro().Query(
 		"SELECT id, agent_name, project, file_paths, claimed_at, released_at, ttl_seconds FROM file_locks WHERE project = ? AND released_at IS NULL ORDER BY claimed_at DESC",
@@ -56,7 +56,7 @@ func (d *DB) ListFileLocks(project string) ([]models.FileLock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list file locks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var locks []models.FileLock
 	for rows.Next() {

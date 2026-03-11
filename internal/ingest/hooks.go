@@ -47,7 +47,7 @@ func (h *hooksWatcher) run(ctx context.Context) {
 		log.Printf("[ingest] failed to create fsnotify watcher: %v", err)
 		return
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	if err := watcher.Add(h.dir); err != nil {
 		log.Printf("[ingest] failed to watch %s: %v", h.dir, err)
@@ -106,7 +106,7 @@ func (h *hooksWatcher) processFile(path string) {
 	var he hookEvent
 	if err := json.Unmarshal(data, &he); err != nil {
 		log.Printf("[ingest] invalid JSON in %s: %v", filepath.Base(path), err)
-		os.Remove(path)
+		_ = os.Remove(path)
 		return
 	}
 
@@ -152,5 +152,5 @@ func (h *hooksWatcher) processFile(path string) {
 		log.Printf("[ingest] event channel full, dropping event for session %s", he.SessionID)
 	}
 
-	os.Remove(path)
+	_ = os.Remove(path)
 }

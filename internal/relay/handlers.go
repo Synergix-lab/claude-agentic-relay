@@ -118,7 +118,7 @@ func (h *Handlers) HandleWhoami(ctx context.Context, req mcp.CallToolRequest) (*
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 
 		// Scan from the end — salt is in recent lines. Read last 64KB.
 		stat, _ := f.Stat()
@@ -126,7 +126,7 @@ func (h *Handlers) HandleWhoami(ctx context.Context, req mcp.CallToolRequest) (*
 		if offset < 0 {
 			offset = 0
 		}
-		f.Seek(offset, 0)
+		_, _ = f.Seek(offset, 0)
 
 		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 256*1024), 256*1024)
@@ -339,7 +339,7 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 	_ = h.db.TouchAgent(project, agent)
 
 	// Expire stale messages before querying
-	h.db.ExpireMessages()
+	_, _ = h.db.ExpireMessages()
 
 	// Build inbox filters
 	filter := db.InboxFilter{
@@ -362,7 +362,7 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 		agentObj, _ := h.db.GetAgent(project, agent)
 		if agentObj != nil {
 			var tags []string
-			json.Unmarshal([]byte(agentObj.InterestTags), &tags)
+			_ = json.Unmarshal([]byte(agentObj.InterestTags), &tags)
 			messages = applyBudget(messages, tags, agentObj.MaxContextBytes)
 		}
 	}
@@ -1205,7 +1205,7 @@ func (h *Handlers) HandleDispatchTask(ctx context.Context, req mcp.CallToolReque
 			content += "\n\n" + description
 		}
 		taskID := task.ID
-		h.db.InsertMessage(project, agent, a.Name, "task", subject, content, fmt.Sprintf(`{"task_id":"%s"}`, taskID), "P2", 14400, nil, nil)
+		_, _ = h.db.InsertMessage(project, agent, a.Name, "task", subject, content, fmt.Sprintf(`{"task_id":"%s"}`, taskID), "P2", 14400, nil, nil)
 	}
 
 	h.events.Emit(MCPEvent{Type: "task", Action: "dispatch", Agent: agent, Project: project, Target: profile, Label: title})
@@ -1696,7 +1696,7 @@ func (h *Handlers) HandleClaimFiles(ctx context.Context, req mcp.CallToolRequest
 	// Auto-broadcast steering message
 	subject := fmt.Sprintf("%s claimed files", agent)
 	content := fmt.Sprintf("%s is now editing: %s", agent, filePaths)
-	h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P1", 0, nil, nil)
+	_, _ = h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P1", 0, nil, nil)
 
 	return h.resultJSONTracked(project, agent, "claim_files", lock)
 }
@@ -1713,7 +1713,7 @@ func (h *Handlers) HandleReleaseFiles(ctx context.Context, req mcp.CallToolReque
 	// Auto-broadcast info message
 	subject := fmt.Sprintf("%s released files", agent)
 	content := fmt.Sprintf("%s released: %s", agent, filePaths)
-	h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P3", 3600, nil, nil)
+	_, _ = h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P3", 3600, nil, nil)
 
 	return h.resultJSONTracked(project, agent, "release_files", map[string]any{"released": filePaths})
 }

@@ -36,7 +36,7 @@ func (d *DB) ListOrgs() ([]models.Org, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list orgs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var orgs []models.Org
 	for rows.Next() {
@@ -103,7 +103,7 @@ func (d *DB) ListTeams(project string) ([]models.Team, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list teams: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var teams []models.Team
 	for rows.Next() {
@@ -125,7 +125,7 @@ func (d *DB) ListAllTeams() ([]models.Team, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list all teams: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var teams []models.Team
 	for rows.Next() {
@@ -209,7 +209,7 @@ func (d *DB) GetTeamMembers(teamID string) ([]models.TeamMember, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get team members: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var members []models.TeamMember
 	for rows.Next() {
@@ -230,7 +230,7 @@ func (d *DB) GetTeamMemberNames(teamID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var names []string
 	for rows.Next() {
@@ -256,7 +256,7 @@ func (d *DB) GetAgentTeams(project, agentName string) ([]models.Team, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get agent teams: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var teams []models.Team
 	for rows.Next() {
@@ -297,7 +297,7 @@ func (d *DB) GetTeamInbox(teamID string, limit int) ([]models.Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get team inbox: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var msgs []models.Message
 	for rows.Next() {
@@ -329,7 +329,7 @@ func (d *DB) GetNotifyChannels(agentName, project string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var targets []string
 	for rows.Next() {
@@ -369,7 +369,7 @@ func (d *DB) CanMessage(project, sender, target string) (bool, error) {
 
 	// Check if sender is in an admin team (unrestricted)
 	var adminCount int
-	d.ro().QueryRow(
+	_ = d.ro().QueryRow(
 		`SELECT COUNT(*) FROM team_members tm
 		 JOIN teams t ON tm.team_id = t.id
 		 WHERE tm.agent_name = ? AND tm.project = ? AND tm.left_at IS NULL AND t.type = 'admin'`,
@@ -381,7 +381,7 @@ func (d *DB) CanMessage(project, sender, target string) (bool, error) {
 
 	// Same team check
 	var sameTeam int
-	d.ro().QueryRow(
+	_ = d.ro().QueryRow(
 		`SELECT COUNT(*) FROM team_members tm1
 		 JOIN team_members tm2 ON tm1.team_id = tm2.team_id
 		 WHERE tm1.agent_name = ? AND tm2.agent_name = ? AND tm1.project = ?
@@ -394,7 +394,7 @@ func (d *DB) CanMessage(project, sender, target string) (bool, error) {
 
 	// reports_to chain check (direct only — sender reports to target or target reports to sender)
 	var reportsChain int
-	d.ro().QueryRow(
+	_ = d.ro().QueryRow(
 		`SELECT COUNT(*) FROM agents
 		 WHERE project = ? AND (
 			(name = ? AND reports_to = ?) OR
@@ -408,7 +408,7 @@ func (d *DB) CanMessage(project, sender, target string) (bool, error) {
 
 	// Notify channels check
 	var notifyCount int
-	d.ro().QueryRow(
+	_ = d.ro().QueryRow(
 		`SELECT COUNT(*) FROM agent_notify_channels
 		 WHERE agent_name = ? AND project = ? AND target = ?`,
 		sender, project, target,
@@ -454,7 +454,7 @@ func (d *DB) GetAllTeamMemberships() ([]TeamMembershipInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get all team memberships: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []TeamMembershipInfo
 	for rows.Next() {

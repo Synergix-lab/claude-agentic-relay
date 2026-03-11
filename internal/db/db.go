@@ -36,23 +36,23 @@ func New() (*DB, error) {
 	}
 	writer.SetMaxOpenConns(1)
 	writer.SetMaxIdleConns(1)
-	writer.Exec("PRAGMA temp_store = MEMORY")
+	_, _ = writer.Exec("PRAGMA temp_store = MEMORY")
 
 	// Reader pool: multiple connections for concurrent reads via WAL.
 	reader, err := sql.Open("sqlite3", dbPath+"?mode=ro&_journal_mode=WAL&_busy_timeout=10000&_foreign_keys=ON")
 	if err != nil {
-		writer.Close()
+		_ = writer.Close()
 		return nil, fmt.Errorf("open reader db: %w", err)
 	}
 	reader.SetMaxOpenConns(10)
 	reader.SetMaxIdleConns(5)
-	reader.Exec("PRAGMA mmap_size = 268435456") // 256MB
-	reader.Exec("PRAGMA temp_store = MEMORY")
-	reader.Exec("PRAGMA cache_size = -20000") // 20MB
+	_, _ = reader.Exec("PRAGMA mmap_size = 268435456") // 256MB
+	_, _ = reader.Exec("PRAGMA temp_store = MEMORY")
+	_, _ = reader.Exec("PRAGMA cache_size = -20000") // 20MB
 
 	if err := migrate(writer); err != nil {
-		writer.Close()
-		reader.Close()
+		_ = writer.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
@@ -60,9 +60,9 @@ func New() (*DB, error) {
 }
 
 func (d *DB) Close() error {
-	d.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	_, _ = d.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	if d.reader != nil && d.reader != d.conn {
-		d.reader.Close()
+		_ = d.reader.Close()
 	}
 	return d.conn.Close()
 }
@@ -80,8 +80,8 @@ func (d *DB) Path() string {
 // Optimize runs PRAGMA optimize and a passive WAL checkpoint on the writer.
 // Safe to call periodically (e.g. every 5 minutes).
 func (d *DB) Optimize() {
-	d.conn.Exec("PRAGMA optimize")
-	d.conn.Exec("PRAGMA wal_checkpoint(PASSIVE)")
+	_, _ = d.conn.Exec("PRAGMA optimize")
+	_, _ = d.conn.Exec("PRAGMA wal_checkpoint(PASSIVE)")
 }
 
 // GetHealthStats returns aggregate database statistics for the /health endpoint.
@@ -90,7 +90,7 @@ func (d *DB) GetHealthStats() map[string]int64 {
 	tables := []string{"agents", "messages", "tasks", "projects", "memories", "boards", "goals", "conversations"}
 	for _, t := range tables {
 		var c int64
-		d.ro().QueryRow("SELECT COUNT(*) FROM " + t).Scan(&c)
+		_ = d.ro().QueryRow("SELECT COUNT(*) FROM " + t).Scan(&c)
 		stats[t] = c
 	}
 	return stats
@@ -133,7 +133,7 @@ func ensureColumns(conn *sql.DB, table string, columns map[string]string) {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	existing := make(map[string]bool)
 	for rows.Next() {
@@ -142,13 +142,13 @@ func ensureColumns(conn *sql.DB, table string, columns map[string]string) {
 		var notnull int
 		var dflt sql.NullString
 		var pk int
-		rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
+		_ = rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
 		existing[name] = true
 	}
 
 	for col, def := range columns {
 		if !existing[col] {
-			conn.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, def))
+			_, _ = conn.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, def))
 		}
 	}
 }
@@ -237,14 +237,14 @@ func migrate(conn *sql.DB) error {
 	})
 
 	// Projects table (planet_type assigned per project)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS projects (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS projects (
 		name        TEXT PRIMARY KEY,
 		planet_type TEXT NOT NULL DEFAULT '',
 		created_at  TEXT NOT NULL DEFAULT ''
 	)`)
 
 	// Settings table (key-value, e.g. sun_type)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS settings (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS settings (
 		key   TEXT PRIMARY KEY,
 		value TEXT NOT NULL DEFAULT ''
 	)`)
@@ -266,13 +266,13 @@ func migrate(conn *sql.DB) error {
 	})
 
 	// Indexes (all idempotent)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project)`)
-	conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_name ON agents(project, name)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_priority ON messages(priority)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project)`)
+	_, _ = conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_project_name ON agents(project, name)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_priority ON messages(priority)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project)`)
 
 	// Remove old global UNIQUE constraint on agents.name (existing DBs only).
 	migrateDropGlobalUnique(conn)
@@ -283,17 +283,17 @@ func migrate(conn *sql.DB) error {
 	}
 
 	// Per-agent read receipts
-	conn.Exec(`CREATE TABLE IF NOT EXISTS message_reads (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS message_reads (
 		message_id TEXT NOT NULL,
 		agent_name TEXT NOT NULL,
 		project    TEXT NOT NULL DEFAULT 'default',
 		read_at    TEXT NOT NULL,
 		UNIQUE(message_id, agent_name)
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_message_reads_agent ON message_reads(agent_name, project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_message_reads_agent ON message_reads(agent_name, project)`)
 
 	// Deliveries (per-recipient message tracking)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS deliveries (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS deliveries (
 		id              TEXT PRIMARY KEY,
 		message_id      TEXT NOT NULL,
 		to_agent        TEXT NOT NULL,
@@ -306,15 +306,15 @@ func migrate(conn *sql.DB) error {
 		project         TEXT NOT NULL DEFAULT 'default',
 		FOREIGN KEY (message_id) REFERENCES messages(id)
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_message ON deliveries(message_id)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_agent_state ON deliveries(to_agent, project, state)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_state ON deliveries(state)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_message ON deliveries(message_id)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_agent_state ON deliveries(to_agent, project, state)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_deliveries_state ON deliveries(state)`)
 
 	// Backfill deliveries for existing messages
 	migrateDeliveries(conn)
 
 	// File locks
-	conn.Exec(`CREATE TABLE IF NOT EXISTS file_locks (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS file_locks (
 		id          TEXT PRIMARY KEY,
 		agent_name  TEXT NOT NULL,
 		project     TEXT NOT NULL,
@@ -323,11 +323,11 @@ func migrate(conn *sql.DB) error {
 		released_at TEXT,
 		ttl_seconds INTEGER NOT NULL DEFAULT 1800
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_file_locks_project ON file_locks(project)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_file_locks_agent ON file_locks(agent_name, project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_file_locks_project ON file_locks(project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_file_locks_agent ON file_locks(agent_name, project)`)
 
 	// Profiles
-	conn.Exec(`CREATE TABLE IF NOT EXISTS profiles (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS profiles (
 		id           TEXT PRIMARY KEY,
 		slug         TEXT NOT NULL,
 		name         TEXT NOT NULL,
@@ -339,14 +339,14 @@ func migrate(conn *sql.DB) error {
 		created_at   TEXT NOT NULL,
 		updated_at   TEXT NOT NULL
 	)`)
-	conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_project_slug ON profiles(project, slug)`)
+	_, _ = conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_project_slug ON profiles(project, slug)`)
 	ensureColumns(conn, "profiles", map[string]string{
 		"skills":      "TEXT NOT NULL DEFAULT '[]'",
 		"vault_paths": "TEXT NOT NULL DEFAULT '[]'",
 	})
 
 	// Tasks
-	conn.Exec(`CREATE TABLE IF NOT EXISTS tasks (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS tasks (
 		id              TEXT PRIMARY KEY,
 		profile_slug    TEXT NOT NULL,
 		assigned_to     TEXT,
@@ -364,9 +364,9 @@ func migrate(conn *sql.DB) error {
 		completed_at    TEXT,
 		reply_to_task   TEXT
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project, status)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_profile ON tasks(project, profile_slug)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(project, priority, status)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project, status)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_profile ON tasks(project, profile_slug)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(project, priority, status)`)
 	ensureColumns(conn, "tasks", map[string]string{
 		"ack_notified_at":  "TEXT",
 		"ack_escalated_at": "TEXT",
@@ -376,12 +376,12 @@ func migrate(conn *sql.DB) error {
 		"archived_at":      "TEXT",
 	})
 	// Migrate legacy reply_to_task -> parent_task_id
-	conn.Exec(`UPDATE tasks SET parent_task_id = reply_to_task WHERE reply_to_task IS NOT NULL AND parent_task_id IS NULL`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_id)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_goal ON tasks(goal_id)`)
+	_, _ = conn.Exec(`UPDATE tasks SET parent_task_id = reply_to_task WHERE reply_to_task IS NOT NULL AND parent_task_id IS NULL`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_id)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_goal ON tasks(goal_id)`)
 
 	// Teams + Orgs
-	conn.Exec(`CREATE TABLE IF NOT EXISTS orgs (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS orgs (
 		id          TEXT PRIMARY KEY,
 		name        TEXT NOT NULL,
 		slug        TEXT UNIQUE NOT NULL,
@@ -389,7 +389,7 @@ func migrate(conn *sql.DB) error {
 		created_at  TEXT NOT NULL
 	)`)
 
-	conn.Exec(`CREATE TABLE IF NOT EXISTS teams (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS teams (
 		id             TEXT PRIMARY KEY,
 		name           TEXT NOT NULL,
 		slug           TEXT NOT NULL,
@@ -400,10 +400,10 @@ func migrate(conn *sql.DB) error {
 		parent_team_id TEXT,
 		created_at     TEXT NOT NULL
 	)`)
-	conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_project_slug ON teams(project, slug)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_teams_org ON teams(org_id)`)
+	_, _ = conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_project_slug ON teams(project, slug)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_teams_org ON teams(org_id)`)
 
-	conn.Exec(`CREATE TABLE IF NOT EXISTS team_members (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS team_members (
 		team_id    TEXT NOT NULL,
 		agent_name TEXT NOT NULL,
 		project    TEXT NOT NULL DEFAULT 'default',
@@ -412,16 +412,16 @@ func migrate(conn *sql.DB) error {
 		left_at    TEXT,
 		PRIMARY KEY (team_id, agent_name)
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_team_members_agent ON team_members(agent_name, project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_team_members_agent ON team_members(agent_name, project)`)
 
-	conn.Exec(`CREATE TABLE IF NOT EXISTS team_inbox (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS team_inbox (
 		team_id    TEXT NOT NULL,
 		message_id TEXT NOT NULL,
 		created_at TEXT NOT NULL,
 		PRIMARY KEY (team_id, message_id)
 	)`)
 
-	conn.Exec(`CREATE TABLE IF NOT EXISTS agent_notify_channels (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS agent_notify_channels (
 		agent_name TEXT NOT NULL,
 		project    TEXT NOT NULL DEFAULT 'default',
 		target     TEXT NOT NULL,
@@ -429,7 +429,7 @@ func migrate(conn *sql.DB) error {
 	)`)
 
 	// Boards
-	conn.Exec(`CREATE TABLE IF NOT EXISTS boards (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS boards (
 		id          TEXT PRIMARY KEY,
 		project     TEXT NOT NULL DEFAULT 'default',
 		name        TEXT NOT NULL,
@@ -438,13 +438,13 @@ func migrate(conn *sql.DB) error {
 		created_by  TEXT NOT NULL DEFAULT 'user',
 		created_at  TEXT NOT NULL
 	)`)
-	conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_boards_project_slug ON boards(project, slug)`)
+	_, _ = conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_boards_project_slug ON boards(project, slug)`)
 	ensureColumns(conn, "boards", map[string]string{
 		"archived_at": "TEXT",
 	})
 
 	// Goals
-	conn.Exec(`CREATE TABLE IF NOT EXISTS goals (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS goals (
 		id              TEXT PRIMARY KEY,
 		project         TEXT NOT NULL DEFAULT 'default',
 		type            TEXT NOT NULL DEFAULT 'agent_goal',
@@ -458,12 +458,12 @@ func migrate(conn *sql.DB) error {
 		updated_at      TEXT NOT NULL,
 		completed_at    TEXT
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_goals_project_status ON goals(project, status)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_goals_parent ON goals(parent_goal_id)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_goals_type ON goals(project, type)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_goals_project_status ON goals(project, status)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_goals_parent ON goals(parent_goal_id)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_goals_type ON goals(project, type)`)
 
 	// Vaults (per-project config)
-	conn.Exec(`CREATE TABLE IF NOT EXISTS vaults (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS vaults (
 		project     TEXT PRIMARY KEY,
 		path        TEXT NOT NULL,
 		created_at  TEXT NOT NULL
@@ -475,7 +475,7 @@ func migrate(conn *sql.DB) error {
 	}
 
 	// Token usage tracking
-	conn.Exec(`CREATE TABLE IF NOT EXISTS token_usage (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS token_usage (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		project    TEXT NOT NULL DEFAULT 'default',
 		agent      TEXT NOT NULL DEFAULT '',
@@ -483,8 +483,8 @@ func migrate(conn *sql.DB) error {
 		bytes      INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_project_time ON token_usage(project, created_at)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_agent_time ON token_usage(project, agent, created_at)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_project_time ON token_usage(project, created_at)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_agent_time ON token_usage(project, agent, created_at)`)
 
 	// Lowercase all agent names for case-insensitive matching
 	migrateLowercaseAgentNames(conn)
@@ -510,12 +510,12 @@ func backfillProjects(conn *sql.DB) {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var projects []string
 	for rows.Next() {
 		var p string
-		rows.Scan(&p)
+		_ = rows.Scan(&p)
 		projects = append(projects, p)
 	}
 
@@ -528,13 +528,13 @@ func backfillProjects(conn *sql.DB) {
 			h = -h
 		}
 		planet := planetPool[h%len(planetPool)]
-		conn.Exec("INSERT OR IGNORE INTO projects (name, planet_type, created_at) VALUES (?, ?, datetime('now'))", p, planet)
+		_, _ = conn.Exec("INSERT OR IGNORE INTO projects (name, planet_type, created_at) VALUES (?, ?, datetime('now'))", p, planet)
 	}
 }
 
 // migrateVault creates the vault_docs table, FTS5 virtual table, and sync triggers.
 func migrateVault(conn *sql.DB) error {
-	conn.Exec(`CREATE TABLE IF NOT EXISTS vault_docs (
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS vault_docs (
 		path       TEXT NOT NULL,
 		project    TEXT NOT NULL,
 		title      TEXT NOT NULL DEFAULT '',
@@ -547,8 +547,8 @@ func migrateVault(conn *sql.DB) error {
 		indexed_at TEXT NOT NULL,
 		PRIMARY KEY (path, project)
 	)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_vault_docs_project ON vault_docs(project)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_vault_docs_tags ON vault_docs(project, tags)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_vault_docs_project ON vault_docs(project)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_vault_docs_tags ON vault_docs(project, tags)`)
 
 	if _, err := conn.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vault_docs_fts USING fts5(
 		path, title, tags, content,
@@ -559,17 +559,17 @@ func migrateVault(conn *sql.DB) error {
 		return nil
 	}
 
-	conn.Exec(`CREATE TRIGGER IF NOT EXISTS vault_docs_ai AFTER INSERT ON vault_docs BEGIN
+	_, _ = conn.Exec(`CREATE TRIGGER IF NOT EXISTS vault_docs_ai AFTER INSERT ON vault_docs BEGIN
 		INSERT INTO vault_docs_fts(rowid, path, title, tags, content)
 		VALUES (new.rowid, new.path, new.title, new.tags, new.content);
 	END`)
 
-	conn.Exec(`CREATE TRIGGER IF NOT EXISTS vault_docs_ad AFTER DELETE ON vault_docs BEGIN
+	_, _ = conn.Exec(`CREATE TRIGGER IF NOT EXISTS vault_docs_ad AFTER DELETE ON vault_docs BEGIN
 		INSERT INTO vault_docs_fts(vault_docs_fts, rowid, path, title, tags, content)
 		VALUES ('delete', old.rowid, old.path, old.title, old.tags, old.content);
 	END`)
 
-	conn.Exec(`CREATE TRIGGER IF NOT EXISTS vault_docs_au AFTER UPDATE ON vault_docs BEGIN
+	_, _ = conn.Exec(`CREATE TRIGGER IF NOT EXISTS vault_docs_au AFTER UPDATE ON vault_docs BEGIN
 		INSERT INTO vault_docs_fts(vault_docs_fts, rowid, path, title, tags, content)
 		VALUES ('delete', old.rowid, old.path, old.title, old.tags, old.content);
 		INSERT INTO vault_docs_fts(rowid, path, title, tags, content)
@@ -595,7 +595,7 @@ func migrateDropGlobalUnique(conn *sql.DB) {
 	if err != nil {
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmts := []string{
 		`CREATE TABLE agents_new (
@@ -626,7 +626,7 @@ func migrateDropGlobalUnique(conn *sql.DB) {
 		}
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 }
 
 // migrateMemories creates the memories table, FTS5 virtual table, and sync triggers.
@@ -655,13 +655,13 @@ func migrateMemories(conn *sql.DB) error {
 	}
 
 	// Layer column migration for existing DBs (idempotent).
-	conn.Exec(`ALTER TABLE memories ADD COLUMN layer TEXT NOT NULL DEFAULT 'behavior'`)
+	_, _ = conn.Exec(`ALTER TABLE memories ADD COLUMN layer TEXT NOT NULL DEFAULT 'behavior'`)
 
 	// Indexes (all idempotent)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_key_scope ON memories(project, scope, key) WHERE archived_at IS NULL`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_name)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(project, scope)`)
-	conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_key_scope ON memories(project, scope, key) WHERE archived_at IS NULL`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_name)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(project, scope)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC)`)
 
 	// FTS5 virtual table for full-text search.
 	// Requires building with -tags "fts5" for github.com/mattn/go-sqlite3.
@@ -675,17 +675,17 @@ func migrateMemories(conn *sql.DB) error {
 	}
 
 	// Triggers to keep FTS in sync
-	conn.Exec(`CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+	_, _ = conn.Exec(`CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
 		INSERT INTO memories_fts(rowid, key, value, tags)
 		VALUES (new.rowid, new.key, new.value, new.tags);
 	END`)
 
-	conn.Exec(`CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+	_, _ = conn.Exec(`CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
 		INSERT INTO memories_fts(memories_fts, rowid, key, value, tags)
 		VALUES ('delete', old.rowid, old.key, old.value, old.tags);
 	END`)
 
-	conn.Exec(`CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+	_, _ = conn.Exec(`CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 		INSERT INTO memories_fts(memories_fts, rowid, key, value, tags)
 		VALUES ('delete', old.rowid, old.key, old.value, old.tags);
 		INSERT INTO memories_fts(rowid, key, value, tags)
@@ -702,7 +702,7 @@ func migrateMemories(conn *sql.DB) error {
 func migrateLowercaseAgentNames(conn *sql.DB) {
 	// Check for duplicates that would violate UNIQUE(project, name)
 	var dupes int
-	conn.QueryRow(`SELECT COUNT(*) FROM (
+	_ = conn.QueryRow(`SELECT COUNT(*) FROM (
 		SELECT project, LOWER(name) FROM agents GROUP BY project, LOWER(name) HAVING COUNT(*) > 1
 	)`).Scan(&dupes)
 	if dupes > 0 {
@@ -714,7 +714,7 @@ func migrateLowercaseAgentNames(conn *sql.DB) {
 	if err != nil {
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmts := []string{
 		"UPDATE agents SET name = LOWER(name) WHERE name != LOWER(name)",
@@ -740,5 +740,5 @@ func migrateLowercaseAgentNames(conn *sql.DB) {
 		}
 	}
 
-	tx.Commit()
+	_ = tx.Commit()
 }

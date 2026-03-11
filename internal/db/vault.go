@@ -37,7 +37,7 @@ func (d *DB) ListVaultConfigs() ([]models.VaultConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var configs []models.VaultConfig
 	for rows.Next() {
 		var cfg models.VaultConfig
@@ -131,7 +131,7 @@ func (d *DB) SearchVault(project, query string, tags []string, limit int) ([]mod
 	if err != nil {
 		return nil, fmt.Errorf("search vault: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []models.VaultSearchResult
 	for rows.Next() {
@@ -166,7 +166,7 @@ func (d *DB) ListVaultDocs(project string, tags []string, limit int) ([]models.V
 	if err != nil {
 		return nil, fmt.Errorf("list vault docs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var docs []models.VaultDoc
 	for rows.Next() {
@@ -189,7 +189,7 @@ func (d *DB) ListAllVaultDocs(limit int) ([]models.VaultDoc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list all vault docs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var docs []models.VaultDoc
 	for rows.Next() {
 		doc, err := scanVaultDoc(rows)
@@ -235,17 +235,17 @@ func (d *DB) GetVaultDocsByPaths(project string, patterns []string, maxTotalByte
 		for rows.Next() {
 			doc, err := scanVaultDoc(rows)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				break
 			}
 			if maxTotalBytes > 0 && totalBytes+doc.SizeBytes > maxTotalBytes {
-				rows.Close()
+				_ = rows.Close()
 				return docs, nil // budget exhausted
 			}
 			totalBytes += doc.SizeBytes
 			docs = append(docs, doc)
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	return docs, nil
@@ -269,7 +269,7 @@ func (d *DB) GetVaultDocsByTags(project string, tags []string, maxTotalBytes int
 	if err != nil {
 		return nil, fmt.Errorf("get vault docs by tags: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var docs []models.VaultDoc
 	totalBytes := 0

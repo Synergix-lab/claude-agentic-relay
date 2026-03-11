@@ -13,13 +13,13 @@ import (
 // Only runs if deliveries table is empty and messages table has data.
 func migrateDeliveries(conn *sql.DB) {
 	var deliveryCount int
-	conn.QueryRow("SELECT COUNT(*) FROM deliveries").Scan(&deliveryCount)
+	_ = conn.QueryRow("SELECT COUNT(*) FROM deliveries").Scan(&deliveryCount)
 	if deliveryCount > 0 {
 		return // already migrated
 	}
 
 	var messageCount int
-	conn.QueryRow("SELECT COUNT(*) FROM messages").Scan(&messageCount)
+	_ = conn.QueryRow("SELECT COUNT(*) FROM messages").Scan(&messageCount)
 	if messageCount == 0 {
 		return // nothing to migrate
 	}
@@ -32,14 +32,14 @@ func migrateDeliveries(conn *sql.DB) {
 		log.Printf("delivery migration: failed to begin tx: %v", err)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.Query("SELECT id, from_agent, to_agent, conversation_id, project FROM messages")
 	if err != nil {
 		log.Printf("delivery migration: failed to query messages: %v", err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	count := 0
 	for rows.Next() {
@@ -60,14 +60,14 @@ func migrateDeliveries(conn *sql.DB) {
 			}
 			for memberRows.Next() {
 				var member string
-				memberRows.Scan(&member)
+				_ = memberRows.Scan(&member)
 				if member != from {
 					state := deliveryStateFromReads(tx, msgID, member)
 					insertDelivery(tx, msgID, member, state, now, project)
 					count++
 				}
 			}
-			memberRows.Close()
+			_ = memberRows.Close()
 		} else if to == "*" {
 			// Broadcast → one delivery per active agent in project (except sender)
 			agentRows, err := tx.Query(
@@ -79,12 +79,12 @@ func migrateDeliveries(conn *sql.DB) {
 			}
 			for agentRows.Next() {
 				var agent string
-				agentRows.Scan(&agent)
+				_ = agentRows.Scan(&agent)
 				state := deliveryStateFromReads(tx, msgID, agent)
 				insertDelivery(tx, msgID, agent, state, now, project)
 				count++
 			}
-			agentRows.Close()
+			_ = agentRows.Close()
 		} else if to != "" {
 			// Direct message → one delivery
 			state := deliveryStateFromReads(tx, msgID, to)
@@ -103,7 +103,7 @@ func migrateDeliveries(conn *sql.DB) {
 
 func deliveryStateFromReads(tx *sql.Tx, msgID, agentName string) string {
 	var exists int
-	tx.QueryRow("SELECT COUNT(*) FROM message_reads WHERE message_id = ? AND agent_name = ?", msgID, agentName).Scan(&exists)
+	_ = tx.QueryRow("SELECT COUNT(*) FROM message_reads WHERE message_id = ? AND agent_name = ?", msgID, agentName).Scan(&exists)
 	if exists > 0 {
 		return "acknowledged"
 	}
@@ -120,7 +120,7 @@ func insertDelivery(tx *sql.Tx, msgID, toAgent, state, now, project string) {
 	case "surfaced":
 		surfacedAt = &now
 	}
-	tx.Exec(
+	_, _ = tx.Exec(
 		fmt.Sprintf("INSERT OR IGNORE INTO deliveries (id, message_id, to_agent, state, sequence_number, created_at, surfaced_at, acknowledged_at, project) VALUES (?, ?, ?, '%s', 0, ?, ?, ?, ?)", state),
 		uuid.New().String(), msgID, toAgent, now, surfacedAt, ackedAt, project,
 	)

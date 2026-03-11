@@ -6,7 +6,7 @@ func runAgents(args []string) {
 	project, _ := parseProject(args)
 
 	d := openDB()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	agents, err := d.ListAgents(project)
 	if err != nil {

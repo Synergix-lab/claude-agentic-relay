@@ -193,7 +193,7 @@ func (d *DB) MarkRead(messageIDs []string, agentName, project string) (int, erro
 				convIDs = append(convIDs, convID)
 			}
 		}
-		convRows.Close()
+		_ = convRows.Close()
 		for _, convID := range convIDs {
 			_ = d.MarkConversationRead(convID, agentName)
 		}
@@ -224,7 +224,7 @@ func (d *DB) FindMessageByPrefix(prefix string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
@@ -246,7 +246,7 @@ func (d *DB) queryMessages(query string, args ...any) ([]models.Message, error) 
 	if err != nil {
 		return nil, fmt.Errorf("query messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []models.Message
 	for rows.Next() {

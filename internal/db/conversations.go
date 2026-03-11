@@ -23,7 +23,7 @@ func (d *DB) CreateConversation(project, title, createdBy string, memberNames []
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(
 		"INSERT INTO conversations (id, title, created_by, created_at, project) VALUES (?, ?, ?, ?, ?)",
@@ -70,7 +70,7 @@ func (d *DB) ListConversations(project, agentName string) ([]models.Conversation
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var convs []models.ConversationSummary
 	for rows.Next() {
@@ -107,7 +107,7 @@ func (d *DB) GetConversationMembers(conversationID string) ([]models.Conversatio
 	if err != nil {
 		return nil, fmt.Errorf("get members: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var members []models.ConversationMember
 	for rows.Next() {

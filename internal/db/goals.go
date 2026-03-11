@@ -110,7 +110,7 @@ func (d *DB) queryGoals(query string, args ...any) ([]models.Goal, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var goals []models.Goal
 	for rows.Next() {
 		g, err := scanGoal(rows)

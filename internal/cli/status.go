@@ -27,7 +27,7 @@ func runStatus() {
 		fmt.Println("db: not found")
 		return
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	stats, err := d.GetGlobalStats()
 	if err != nil {
@@ -72,6 +72,6 @@ func isListening(port string) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }

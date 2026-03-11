@@ -14,7 +14,7 @@ func runThread(args []string) {
 
 	messageID := args[0]
 	d := openDB()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	// Support short ID prefixes (e.g. "75cd52c8" instead of full UUID).
 	if !strings.Contains(messageID, "-") || len(messageID) < 36 {

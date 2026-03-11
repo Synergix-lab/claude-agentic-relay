@@ -10,7 +10,7 @@ func runStats(args []string) {
 	project, _ := parseProject(args)
 
 	d := openDB()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	stats, err := d.GetStats(project)
 	if err != nil {

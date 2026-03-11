@@ -47,7 +47,7 @@ func (d *DB) ListBoards(project string) ([]models.Board, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list boards: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var boards []models.Board
 	for rows.Next() {
@@ -67,7 +67,7 @@ func (d *DB) ListAllBoards() ([]models.Board, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list all boards: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var boards []models.Board
 	for rows.Next() {

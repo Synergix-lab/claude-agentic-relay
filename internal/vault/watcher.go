@@ -212,7 +212,7 @@ func (w *Watcher) watch(ctx context.Context, cfg models.VaultConfig) {
 		log.Printf("[vault] failed to create watcher for %s: %v", cfg.Path, err)
 		return
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	// Add all vault dirs recursively
 	_ = filepath.Walk(cfg.Path, func(path string, info os.FileInfo, err error) error {
@@ -223,7 +223,7 @@ func (w *Watcher) watch(ctx context.Context, cfg models.VaultConfig) {
 		if rel != "." && (strings.HasPrefix(rel, ".") || strings.Contains(rel, "/.")) {
 			return filepath.SkipDir
 		}
-		watcher.Add(path)
+		_ = watcher.Add(path)
 		return nil
 	})
 	log.Printf("[vault] watching %s for changes (project: %s)", cfg.Path, cfg.Project)
@@ -247,7 +247,7 @@ func (w *Watcher) watch(ctx context.Context, cfg models.VaultConfig) {
 				pending[event.Name] = time.Now()
 			} else if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
 				rel, _ := filepath.Rel(cfg.Path, event.Name)
-				w.db.DeleteVaultDoc(cfg.Project, rel)
+				_ = w.db.DeleteVaultDoc(cfg.Project, rel)
 				log.Printf("[vault] removed %s (project: %s)", rel, cfg.Project)
 			}
 		case <-ticker.C:

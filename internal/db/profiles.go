@@ -102,7 +102,7 @@ func (d *DB) ListProfiles(project string) ([]models.Profile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list profiles: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var profiles []models.Profile
 	for rows.Next() {
@@ -122,7 +122,7 @@ func (d *DB) ListAllProfiles() ([]models.Profile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list all profiles: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var profiles []models.Profile
 	for rows.Next() {
@@ -147,7 +147,7 @@ func (d *DB) FindProfilesBySkillTag(project, tag string) ([]models.Profile, erro
 	if err != nil {
 		return nil, fmt.Errorf("find profiles by skill tag: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var profiles []models.Profile
 	for rows.Next() {

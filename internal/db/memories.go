@@ -402,7 +402,7 @@ func (d *DB) ResolveConflict(project, agentName, key, chosenValue, scope string)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Archive all losers
 	for _, l := range losers {
@@ -606,7 +606,7 @@ func (d *DB) queryMemories(query string, args ...any) ([]models.Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query memories: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []models.Memory
 	for rows.Next() {
@@ -631,7 +631,7 @@ func ParseTags(tagsJSON string) []string {
 		return nil
 	}
 	var tags []string
-	json.Unmarshal([]byte(tagsJSON), &tags)
+	_ = json.Unmarshal([]byte(tagsJSON), &tags)
 	return tags
 }
 

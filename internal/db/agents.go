@@ -95,7 +95,7 @@ func (d *DB) ListAgents(project string) ([]models.Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var agents []models.Agent
 	for rows.Next() {
@@ -161,7 +161,7 @@ func (d *DB) GetAgentsByProfile(project, profileSlug string) ([]models.Agent, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var agents []models.Agent
 	for rows.Next() {
 		a, err := scanAgent(rows)
@@ -193,7 +193,7 @@ func (d *DB) GetOrgTree(project string) ([]models.Agent, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get org tree: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var agents []models.Agent
 	for rows.Next() {
@@ -212,7 +212,7 @@ func (d *DB) GetKnownSessionIDs() map[string]bool {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	ids := make(map[string]bool)
 	for rows.Next() {

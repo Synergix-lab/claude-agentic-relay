@@ -28,7 +28,7 @@ func randomPlanet() string {
 // EnsureProject creates a project entry if it doesn't exist, assigning a random planet.
 func (d *DB) EnsureProject(name string) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	d.conn.Exec(
+	_, _ = d.conn.Exec(
 		"INSERT OR IGNORE INTO projects (name, planet_type, created_at) VALUES (?, ?, ?)",
 		name, randomPlanet(), now,
 	)
@@ -56,13 +56,13 @@ func (d *DB) UpdateProjectPlanetType(name, planetType string) error {
 // GetSetting returns a setting value by key.
 func (d *DB) GetSetting(key string) string {
 	var val string
-	d.ro().QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
+	_ = d.ro().QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
 	return val
 }
 
 // SetSetting upserts a setting.
 func (d *DB) SetSetting(key, value string) {
-	d.conn.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, value, value)
+	_, _ = d.conn.Exec("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, value, value)
 }
 
 // DeleteProject removes a project and all its associated data (cascade delete).
@@ -71,16 +71,16 @@ func (d *DB) DeleteProject(name string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Disable FK checks during cascade delete to avoid ordering issues
-	tx.Exec("PRAGMA foreign_keys = OFF")
+	_, _ = tx.Exec("PRAGMA foreign_keys = OFF")
 
 	// Delete junction tables that lack a project column (linked via IDs)
-	tx.Exec("DELETE FROM conversation_members WHERE conversation_id IN (SELECT id FROM conversations WHERE project = ?)", name)
-	tx.Exec("DELETE FROM conversation_reads WHERE conversation_id IN (SELECT id FROM conversations WHERE project = ?)", name)
-	tx.Exec("DELETE FROM team_inbox WHERE team_id IN (SELECT id FROM teams WHERE project = ?)", name)
-	tx.Exec("DELETE FROM message_reads WHERE message_id IN (SELECT id FROM messages WHERE project = ?)", name)
+	_, _ = tx.Exec("DELETE FROM conversation_members WHERE conversation_id IN (SELECT id FROM conversations WHERE project = ?)", name)
+	_, _ = tx.Exec("DELETE FROM conversation_reads WHERE conversation_id IN (SELECT id FROM conversations WHERE project = ?)", name)
+	_, _ = tx.Exec("DELETE FROM team_inbox WHERE team_id IN (SELECT id FROM teams WHERE project = ?)", name)
+	_, _ = tx.Exec("DELETE FROM message_reads WHERE message_id IN (SELECT id FROM messages WHERE project = ?)", name)
 
 	// Delete all related data (tables with a project column)
 	tables := []string{
@@ -113,7 +113,7 @@ func (d *DB) DeleteProject(name string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	d.conn.Exec("PRAGMA foreign_keys = ON")
+	_, _ = d.conn.Exec("PRAGMA foreign_keys = ON")
 	return nil
 }
 
@@ -150,7 +150,7 @@ func (d *DB) ListProjectsWithInfo() ([]models.ProjectInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var projects []models.ProjectInfo
 	for rows.Next() {

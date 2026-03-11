@@ -72,7 +72,7 @@ func (d *DB) GetInboxViaDeliveries(project, agentName string, unreadOnly bool, l
 	if err != nil {
 		return nil, fmt.Errorf("get inbox via deliveries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []models.Message
 	var deliveryIDs []string
@@ -101,7 +101,7 @@ func (d *DB) GetInboxViaDeliveries(project, agentName string, unreadOnly bool, l
 	if len(deliveryIDs) > 0 {
 		now := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
 		for _, id := range deliveryIDs {
-			d.conn.Exec("UPDATE deliveries SET state = 'surfaced', surfaced_at = ? WHERE id = ? AND state = 'queued'", now, id)
+			_, _ = d.conn.Exec("UPDATE deliveries SET state = 'surfaced', surfaced_at = ? WHERE id = ? AND state = 'queued'", now, id)
 		}
 	}
 
@@ -148,7 +148,7 @@ func (d *DB) ExpireDeliveries() (int, error) {
 // HasDeliveries returns true if the deliveries table has any rows.
 func (d *DB) HasDeliveries() bool {
 	var count int
-	d.ro().QueryRow("SELECT COUNT(*) FROM deliveries LIMIT 1").Scan(&count)
+	_ = d.ro().QueryRow("SELECT COUNT(*) FROM deliveries LIMIT 1").Scan(&count)
 	return count > 0
 }
 

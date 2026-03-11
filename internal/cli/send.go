@@ -29,7 +29,7 @@ func runSend(args []string) {
 
 	// Write directly to DB (WAL supports concurrent readers + single writer).
 	d := openDBReadWrite()
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 
 	msg, err := d.InsertMessage(project, from, to, msgType, subject, content, "{}", "P2", 3600, nil, nil)
 	if err != nil {

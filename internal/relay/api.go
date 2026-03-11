@@ -866,7 +866,7 @@ func (r *Relay) apiStreamActivity(w http.ResponseWriter, req *http.Request) {
 	}
 	payload := r.buildSSEPayload(sessions)
 	data, _ := json.Marshal(payload)
-	fmt.Fprintf(w, "data: %s\n\n", data)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
 
 	for {
@@ -879,7 +879,7 @@ func (r *Relay) apiStreamActivity(w http.ResponseWriter, req *http.Request) {
 			}
 			payload := r.buildSSEPayload(snap)
 			data, _ := json.Marshal(payload)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
 	}
@@ -908,7 +908,7 @@ func (r *Relay) apiStreamEvents(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 			data, _ := json.Marshal(evt)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
 	}
@@ -1531,7 +1531,7 @@ func (r *Relay) apiUpdateVaultDoc(w http.ResponseWriter, req *http.Request, path
 		http.Error(w, `{"error":"failed to read body"}`, http.StatusBadRequest)
 		return
 	}
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 
 	var payload struct {
 		Content string `json:"content"`
@@ -1569,7 +1569,7 @@ func (r *Relay) apiUpdateVaultDoc(w http.ResponseWriter, req *http.Request, path
 		doc.Content = payload.Content
 		doc.SizeBytes = len(newContent)
 		doc.UpdatedAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
-		r.DB.UpsertVaultDoc(doc)
+		_ = r.DB.UpsertVaultDoc(doc)
 	}
 
 	writeJSON(w, map[string]any{"ok": true})

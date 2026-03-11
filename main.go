@@ -54,7 +54,7 @@ func startServer() {
 	if err != nil {
 		log.Fatalf("failed to init database: %v", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	ingester, err := ingest.New(ingest.Config{
 		SessionProvider: func() map[string]bool {

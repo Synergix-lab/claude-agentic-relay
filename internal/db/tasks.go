@@ -206,7 +206,7 @@ func (d *DB) getSubtasks(parentID, project string, depth, maxDepth int) ([]model
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Collect all tasks first to close rows before recursive calls
 	var tasks []models.Task
@@ -220,7 +220,7 @@ func (d *DB) getSubtasks(parentID, project string, depth, maxDepth int) ([]model
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	// Now recursively fetch subtasks (rows is closed, no deadlock)
 	for i := range tasks {
@@ -269,7 +269,7 @@ func (d *DB) queryTasks(query string, args ...any) ([]models.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var tasks []models.Task
 	for rows.Next() {
 		t, err := scanTask(rows)
@@ -291,7 +291,7 @@ func (d *DB) GetUnackedTasks(minAge time.Duration) ([]models.Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get unacked tasks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []models.Task
 	for rows.Next() {
@@ -380,7 +380,7 @@ func (d *DB) ListTasks(project, status, profileSlug, priority, assignedTo, board
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []models.Task
 	for rows.Next() {
@@ -404,7 +404,7 @@ func (d *DB) ListAllTasks(limit int) ([]models.Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list all tasks: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []models.Task
 	for rows.Next() {
@@ -508,7 +508,7 @@ func (d *DB) GetTasksSince(project, since string, limit int) ([]models.Task, err
 	if err != nil {
 		return nil, fmt.Errorf("get tasks since: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []models.Task
 	for rows.Next() {
@@ -560,7 +560,7 @@ func (d *DB) ResolveTaskID(prefix, project string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
