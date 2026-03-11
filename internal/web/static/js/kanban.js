@@ -302,9 +302,14 @@ const KANBAN_STYLES = `
 }
 .kb-card-checklist {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.kb-card-cl-header {
+  display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
 }
 .kb-card-cl-bar {
   flex: 1;
@@ -323,6 +328,41 @@ const KANBAN_STYLES = `
   font: 9px 'JetBrains Mono', monospace;
   color: rgba(255,255,255,0.35);
   white-space: nowrap;
+}
+.kb-card-cl-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 3px;
+}
+.kb-card-cl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: 9px/1.3 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  padding: 1px 0;
+}
+.kb-card-cl-row:hover {
+  color: rgba(255,255,255,0.75);
+}
+.kb-card-cl-row input[type="checkbox"] {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #00e676;
+  flex-shrink: 0;
+}
+.kb-card-cl-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-card-cl-row.kb-cl-done span {
+  text-decoration: line-through;
+  color: rgba(255,255,255,0.25);
 }
 .kb-card-actions {
   position: absolute;
@@ -1063,7 +1103,11 @@ export class KanbanBoard {
   _getFilteredGroups() {
     let filtered = this.tasks;
     if (this.selectedBoard !== null) {
-      filtered = filtered.filter(t => t.board_id === this.selectedBoard);
+      filtered = filtered.filter(t =>
+        t.board_id === this.selectedBoard ||
+        (t.board_id && this.selectedBoard.startsWith(t.board_id)) ||
+        (t.board_id && t.board_id.startsWith(this.selectedBoard))
+      );
     }
     if (this.selectedGoal !== null) {
       filtered = filtered.filter(t => t.goal_id === this.selectedGoal);
@@ -1206,18 +1250,57 @@ export class KanbanBoard {
     }
     card.appendChild(meta);
 
-    // Checklist mini progress (if description has checklist items)
+    // Inline checklist (checkable directly on card)
     const parsed = this._parseChecklist(task.description || '');
     if (parsed.items.length > 0) {
       const done = parsed.items.filter(i => i.checked).length;
       const total = parsed.items.length;
       const pct = Math.round((done / total) * 100);
       const clWrap = document.createElement('div');
-      clWrap.className = 'kb-card-checklist';
+      clWrap.className = 'kb-card-checklist kb-card-checklist--inline';
+
+      // Progress bar
       clWrap.innerHTML = `
-        <div class="kb-card-cl-bar"><div class="kb-card-cl-fill" style="width:${pct}%"></div></div>
-        <span class="kb-card-cl-text">${done}/${total}</span>
+        <div class="kb-card-cl-header">
+          <div class="kb-card-cl-bar"><div class="kb-card-cl-fill" style="width:${pct}%"></div></div>
+          <span class="kb-card-cl-text">${done}/${total}</span>
+        </div>
       `;
+
+      // Inline checkboxes
+      const listEl = document.createElement('div');
+      listEl.className = 'kb-card-cl-items';
+      parsed.items.forEach((item, idx) => {
+        const row = document.createElement('label');
+        row.className = 'kb-card-cl-row' + (item.checked ? ' kb-cl-done' : '');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = item.checked;
+        cb.addEventListener('click', (e) => {
+          e.stopPropagation(); // prevent card click
+        });
+        cb.addEventListener('change', (e) => {
+          e.stopPropagation();
+          parsed.items[idx].checked = cb.checked;
+          row.classList.toggle('kb-cl-done', cb.checked);
+          // Rebuild description and save
+          const newDesc = this._rebuildDescription(parsed);
+          this._saveChecklist(task.id, newDesc);
+          // Update progress
+          const newDone = parsed.items.filter(i => i.checked).length;
+          const newPct = Math.round((newDone / total) * 100);
+          const fill = clWrap.querySelector('.kb-card-cl-fill');
+          const text = clWrap.querySelector('.kb-card-cl-text');
+          if (fill) fill.style.width = newPct + '%';
+          if (text) text.textContent = newDone + '/' + total;
+        });
+        const span = document.createElement('span');
+        span.textContent = item.text;
+        row.appendChild(cb);
+        row.appendChild(span);
+        listEl.appendChild(row);
+      });
+      clWrap.appendChild(listEl);
       card.appendChild(clWrap);
     }
 
@@ -1493,6 +1576,23 @@ export class KanbanBoard {
     container.innerHTML = this._buildChecklistHTML(items);
     this._attachChecklistEvents(container, items, onUpdate);
     onUpdate();
+  }
+
+  _rebuildDescription(parsed) {
+    let desc = parsed.text;
+    if (parsed.items.length > 0) {
+      if (desc && !desc.endsWith('\n')) desc += '\n';
+      desc += parsed.items.map(i => `- [${i.checked ? 'x' : ' '}] ${i.text}`).join('\n');
+    }
+    return desc;
+  }
+
+  _saveChecklist(taskId, newDescription) {
+    if (!this.apiClient) return;
+    this.apiClient.updateTask(taskId, { description: newDescription });
+    // Also update local task data to keep fingerprint in sync
+    const task = this.tasks.find(t => t.id === taskId);
+    if (task) task.description = newDescription;
   }
 
   _serializeDescription(text, items) {
