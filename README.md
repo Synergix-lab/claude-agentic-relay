@@ -10,9 +10,11 @@ Your AI agents are robots. Your projects are planets. You run the galaxy.
 
 <br>
 
+[![Beta](https://img.shields.io/badge/v0.5.0-Public%20Beta-ff6b35?style=for-the-badge)](https://github.com/Synergix-lab/WRAI.TH/releases/tag/v0.5.0)
 [![Go](https://img.shields.io/badge/Go-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Protocol-8A2BE2?style=for-the-badge)](https://modelcontextprotocol.io)
 [![SQLite](https://img.shields.io/badge/SQLite-FTS5-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org)
+[![Uber Style](https://img.shields.io/badge/Style-Uber%20Go-00ADD8?style=for-the-badge)](https://github.com/uber-go/guide/blob/master/style.md)
 [![License](https://img.shields.io/badge/AGPL--3.0-blue?style=for-the-badge)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/QPq7qfbEk8)
 
@@ -23,6 +25,9 @@ Your AI agents are robots. Your projects are planets. You run the galaxy.
 <img src="docs/screenshots/galaxy-view.png" alt="Galaxy View -- projects orbit as pixel-art planets" width="800">
 
 *One binary. One SQLite file. 67 MCP tools. Zero required config.*
+
+**Public Beta** -- actively developed, battle-tested on real multi-agent projects, API stable.
+Breaking changes possible before 1.0 but will be documented.
 
 **100% local by default. Optional API key for team/server deployments. No cloud, no telemetry.**
 
