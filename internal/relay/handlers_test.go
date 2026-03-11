@@ -22,7 +22,7 @@ func testHandlers(t *testing.T) *Handlers {
 	if err != nil {
 		t.Fatalf("create test db: %v", err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() { _ = database.Close() })
 
 	mcpSrv := server.NewMCPServer("test", "0.0.0")
 	registry := NewSessionRegistry(mcpSrv)
@@ -90,7 +90,7 @@ func TestRegisterAgent(t *testing.T) {
 func TestRegisterAgentRespawn(t *testing.T) {
 	h := testHandlers(t)
 
-	h.HandleRegisterAgent(ctx, call(map[string]any{
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{
 		"project": "test-proj",
 		"name":    "bot-a",
 		"role":    "developer",
@@ -119,8 +119,8 @@ func TestRegisterAgentMissingName(t *testing.T) {
 func TestListAgents(t *testing.T) {
 	h := testHandlers(t)
 
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	res, _ := h.HandleListAgents(ctx, call(map[string]any{"project": "p1"}))
 	data := parseJSON(t, res)
@@ -131,7 +131,7 @@ func TestListAgents(t *testing.T) {
 
 func TestDeactivateAgent(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	res, _ := h.HandleDeactivateAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a"}))
 	data := parseJSON(t, res)
@@ -151,7 +151,7 @@ func TestDeactivateAgent(t *testing.T) {
 
 func TestDeleteAgent(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	res, _ := h.HandleDeleteAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a"}))
 	data := parseJSON(t, res)
@@ -169,7 +169,7 @@ func TestDeleteAgent(t *testing.T) {
 
 func TestSleepAgent(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	res, _ := h.HandleSleepAgent(ctx, call(map[string]any{"project": "p1", "as": "bot-a"}))
 	data := parseJSON(t, res)
@@ -182,8 +182,8 @@ func TestSleepAgent(t *testing.T) {
 
 func TestSendAndGetInbox(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	// Send message
 	sendRes, _ := h.HandleSendMessage(ctx, call(map[string]any{
@@ -236,8 +236,8 @@ func TestSendMessageMissingTo(t *testing.T) {
 
 func TestMarkRead(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	sendRes, _ := h.HandleSendMessage(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "to": "bot-b", "content": "hello",
@@ -276,8 +276,8 @@ func TestMarkReadMissingIDs(t *testing.T) {
 
 func TestGetThread(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	// Send original
 	res1, _ := h.HandleSendMessage(ctx, call(map[string]any{
@@ -287,7 +287,7 @@ func TestGetThread(t *testing.T) {
 	msg1ID := msg1["id"].(string)
 
 	// Reply
-	h.HandleSendMessage(ctx, call(map[string]any{
+	_, _ = h.HandleSendMessage(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-b", "to": "bot-a", "content": "reply", "reply_to": msg1ID,
 	}))
 
@@ -303,9 +303,9 @@ func TestGetThread(t *testing.T) {
 
 func TestConversationLifecycle(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-c", "role": "pm"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-c", "role": "pm"}))
 
 	// Create conversation
 	createRes, _ := h.HandleCreateConversation(ctx, call(map[string]any{
@@ -325,7 +325,7 @@ func TestConversationLifecycle(t *testing.T) {
 	}
 
 	// Send message to conversation
-	h.HandleSendMessage(ctx, call(map[string]any{
+	_, _ = h.HandleSendMessage(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "to": "", "content": "hello conv",
 		"conversation_id": convID,
 	}))
@@ -385,8 +385,8 @@ func TestCreateConversationMissingMembers(t *testing.T) {
 
 func TestConversationNonMemberCantRead(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	createRes, _ := h.HandleCreateConversation(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "title": "private", "members": []any{"bot-a", "bot-b"},
@@ -405,7 +405,7 @@ func TestConversationNonMemberCantRead(t *testing.T) {
 
 func TestTaskLifecycle(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	// Dispatch
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
@@ -448,7 +448,7 @@ func TestTaskLifecycle(t *testing.T) {
 
 func TestTaskBlock(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "task1",
@@ -456,8 +456,8 @@ func TestTaskBlock(t *testing.T) {
 	task := parseJSON(t, dispatchRes)["task"].(map[string]any)
 	taskID := task["id"].(string)
 
-	h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
-	h.HandleStartTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
+	_, _ = h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
+	_, _ = h.HandleStartTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
 
 	blockRes, _ := h.HandleBlockTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "task_id": taskID, "reason": "waiting for API",
@@ -470,7 +470,7 @@ func TestTaskBlock(t *testing.T) {
 
 func TestTaskCancel(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "to cancel",
@@ -489,7 +489,7 @@ func TestTaskCancel(t *testing.T) {
 
 func TestGetTask(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "get me",
@@ -516,11 +516,11 @@ func TestGetTaskNotFound(t *testing.T) {
 
 func TestListTasks(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
-	h.HandleDispatchTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "profile": "dev", "title": "task1"}))
-	h.HandleDispatchTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "profile": "dev", "title": "task2"}))
-	h.HandleDispatchTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "profile": "qa", "title": "task3"}))
+	_, _ = h.HandleDispatchTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "profile": "dev", "title": "task1"}))
+	_, _ = h.HandleDispatchTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "profile": "dev", "title": "task2"}))
+	_, _ = h.HandleDispatchTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "profile": "qa", "title": "task3"}))
 
 	// List all
 	res, _ := h.HandleListTasks(ctx, call(map[string]any{"project": "p1"}))
@@ -539,7 +539,7 @@ func TestListTasks(t *testing.T) {
 
 func TestArchiveTasks(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	dispatchRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "profile": "dev", "title": "to archive",
@@ -548,9 +548,9 @@ func TestArchiveTasks(t *testing.T) {
 	taskID := task["id"].(string)
 
 	// Complete it first
-	h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
-	h.HandleStartTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
-	h.HandleCompleteTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
+	_, _ = h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
+	_, _ = h.HandleStartTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
+	_, _ = h.HandleCompleteTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": taskID}))
 
 	// Archive done tasks
 	archiveRes, _ := h.HandleArchiveTasks(ctx, call(map[string]any{
@@ -620,10 +620,10 @@ func TestMemorySetMissingFields(t *testing.T) {
 
 func TestMemorySearch(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleSetMemory(ctx, call(map[string]any{
+	_, _ = h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "key": "deploy_url", "value": "the production deploy URL is https://prod.example.com",
 	}))
-	h.HandleSetMemory(ctx, call(map[string]any{
+	_, _ = h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "key": "db_host", "value": "database host is db.internal",
 	}))
 
@@ -642,10 +642,10 @@ func TestMemorySearch(t *testing.T) {
 
 func TestMemoryList(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleSetMemory(ctx, call(map[string]any{
+	_, _ = h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "key": "k1", "value": "v1",
 	}))
-	h.HandleSetMemory(ctx, call(map[string]any{
+	_, _ = h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-b", "key": "k2", "value": "v2",
 	}))
 
@@ -660,7 +660,7 @@ func TestMemoryList(t *testing.T) {
 
 func TestMemoryDelete(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleSetMemory(ctx, call(map[string]any{
+	_, _ = h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "key": "temp", "value": "to delete",
 	}))
 
@@ -738,11 +738,11 @@ func TestRegisterProfileMissingFields(t *testing.T) {
 
 func TestFindProfiles(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterProfile(ctx, call(map[string]any{
+	_, _ = h.HandleRegisterProfile(ctx, call(map[string]any{
 		"project": "p1", "slug": "backend", "name": "Backend Dev", "role": "dev",
 		"skills": `[{"tag": "golang"}]`,
 	}))
-	h.HandleRegisterProfile(ctx, call(map[string]any{
+	_, _ = h.HandleRegisterProfile(ctx, call(map[string]any{
 		"project": "p1", "slug": "frontend", "name": "Frontend Dev", "role": "dev",
 		"skills": `[{"tag": "react"}]`,
 	}))
@@ -855,7 +855,7 @@ func TestGoalLifecycle(t *testing.T) {
 
 func TestOrgAndTeamLifecycle(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	// Create org
 	orgRes, _ := h.HandleCreateOrg(ctx, call(map[string]any{
@@ -912,11 +912,11 @@ func TestMemoryConflictAndResolve(t *testing.T) {
 	h := testHandlers(t)
 
 	// Agent A sets a memory
-	h.HandleSetMemory(ctx, call(map[string]any{
+	_, _ = h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "key": "db_host", "value": "localhost",
 	}))
 
-	// Agent B sets the same key with different value → conflict (upsert=false)
+	// Agent B sets the same key with different value -> conflict (upsert=false)
 	setRes, _ := h.HandleSetMemory(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-b", "key": "db_host", "value": "prod-db.internal", "upsert": false,
 	}))
@@ -979,7 +979,7 @@ func TestGoalCascade(t *testing.T) {
 	parentID := parent["id"].(string)
 
 	// Create child goal
-	h.HandleCreateGoal(ctx, call(map[string]any{
+	_, _ = h.HandleCreateGoal(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "title": "Sub-goal", "type": "project_goal",
 		"parent_goal_id": parentID,
 	}))
@@ -991,24 +991,24 @@ func TestGoalCascade(t *testing.T) {
 	if cascadeRes.IsError {
 		t.Fatalf("cascade error: %v", cascadeRes.Content)
 	}
-	// cascade returns a structure — just verify it doesn't error
+	// cascade returns a structure -- just verify it doesn't error
 }
 
 // --- Team Inbox Tests ---
 
 func TestTeamInbox(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
-	h.HandleCreateTeam(ctx, call(map[string]any{
+	_, _ = h.HandleCreateTeam(ctx, call(map[string]any{
 		"project": "p1", "name": "Dev Team", "slug": "dev",
 	}))
-	h.HandleAddTeamMember(ctx, call(map[string]any{
+	_, _ = h.HandleAddTeamMember(ctx, call(map[string]any{
 		"project": "p1", "team": "dev", "agent_name": "bot-a",
 	}))
 
 	// Send message to team
-	h.HandleSendMessage(ctx, call(map[string]any{
+	_, _ = h.HandleSendMessage(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "to": "team:dev", "content": "team message",
 	}))
 
@@ -1062,8 +1062,8 @@ func TestAddNotifyChannelMissingTarget(t *testing.T) {
 
 func TestSendBroadcastMessage(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	res, _ := h.HandleSendMessage(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "to": "*", "content": "broadcast!",
@@ -1085,8 +1085,8 @@ func TestSendBroadcastMessage(t *testing.T) {
 
 func TestSendConversationShorthand(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-b", "role": "qa"}))
 
 	// Create conversation
 	createRes, _ := h.HandleCreateConversation(ctx, call(map[string]any{
@@ -1108,7 +1108,7 @@ func TestSendConversationShorthand(t *testing.T) {
 
 func TestTaskSubtaskCompletion(t *testing.T) {
 	h := testHandlers(t)
-	h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
+	_, _ = h.HandleRegisterAgent(ctx, call(map[string]any{"project": "p1", "name": "bot-a", "role": "dev"}))
 
 	// Dispatch parent
 	parentRes, _ := h.HandleDispatchTask(ctx, call(map[string]any{
@@ -1126,8 +1126,8 @@ func TestTaskSubtaskCompletion(t *testing.T) {
 	subID := sub["id"].(string)
 
 	// Complete subtask flow
-	h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": subID}))
-	h.HandleStartTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": subID}))
+	_, _ = h.HandleClaimTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": subID}))
+	_, _ = h.HandleStartTask(ctx, call(map[string]any{"project": "p1", "as": "bot-a", "task_id": subID}))
 	completeRes, _ := h.HandleCompleteTask(ctx, call(map[string]any{
 		"project": "p1", "as": "bot-a", "task_id": subID, "result": "done",
 	}))
