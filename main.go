@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	"agent-relay/internal/db"
 	"agent-relay/internal/ingest"
 	"agent-relay/internal/relay"
+	"agent-relay/internal/spawn"
 	"agent-relay/internal/vault"
 )
 
@@ -31,7 +33,7 @@ func main() {
 		case "serve":
 			startServer()
 			return
-		case "init", "update", "status", "agents", "inbox", "send", "thread", "stats", "conversations", "memories":
+		case "init", "update", "status", "agents", "inbox", "send", "thread", "stats", "conversations", "memories", "children", "schedules", "history":
 			cli.Run(os.Args[1:])
 			return
 		default:
@@ -74,6 +76,13 @@ func startServer() {
 
 	r := relay.New(database, ingester, vaultWatcher, cfg)
 
+	// Start scheduler and load persisted schedules
+	if r.SpawnMgr != nil {
+		r.Scheduler.Start()
+		r.SpawnMgr.LoadSchedulesFromDB()
+		defer r.Scheduler.Stop()
+	}
+
 	addr := ":8090"
 	if v := os.Getenv("PORT"); v != "" {
 		addr = ":" + v
@@ -86,6 +95,14 @@ func startServer() {
 	cleanupDone := make(chan struct{})
 	relay.StartCleanup(database, cleanupDone)
 	relay.StartACKChecker(database, r.Registry, cleanupDone)
+
+	// Start ghost reaper for spawn crash detection
+	if r.SpawnMgr != nil {
+		spawn.StartReaper(database, r.SpawnMgr, cleanupDone, slog.Default())
+	}
+
+	// Start poll trigger background worker
+	r.Handlers.StartPoller(cleanupDone)
 
 	// Log ingested events (phase 1: log only, phase 2: TouchAgent + WS broadcast)
 	go func() {
