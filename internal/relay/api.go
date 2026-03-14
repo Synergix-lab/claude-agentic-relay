@@ -107,9 +107,18 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiDeleteTask(w, req, path)
 	case strings.HasPrefix(path, "/tasks/") && req.Method == http.MethodGet:
 		r.apiGetTask(w, req, path)
+	// Agent management
+	case strings.HasPrefix(path, "/agents/") && req.Method == http.MethodDelete:
+		r.apiDeactivateAgent(w, req, path)
 	// Profile endpoints
 	case path == "/profiles" && req.Method == http.MethodGet:
 		r.apiGetProfiles(w, req)
+	case path == "/profiles" && req.Method == http.MethodPost:
+		r.apiCreateProfile(w, req)
+	case strings.HasPrefix(path, "/profiles/") && req.Method == http.MethodPut:
+		r.apiUpdateProfile(w, req, path)
+	case strings.HasPrefix(path, "/profiles/") && req.Method == http.MethodDelete:
+		r.apiDeleteProfile(w, req, path)
 	case strings.HasPrefix(path, "/profiles/") && req.Method == http.MethodGet:
 		r.apiGetProfile(w, req, path)
 	// Org + Team endpoints
@@ -170,6 +179,13 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiKillSpawnChild(w, path)
 	case strings.HasPrefix(path, "/spawn/children/") && req.Method == http.MethodGet:
 		r.apiGetSpawnChild(w, path)
+	// Terminal (PTY) endpoints
+	case path == "/terminal/spawn" && req.Method == http.MethodPost:
+		r.apiTerminalSpawn(w, req)
+	case strings.HasPrefix(path, "/terminal/ws/") && req.Method == http.MethodGet:
+		r.apiTerminalWS(w, req, path)
+	case strings.HasPrefix(path, "/terminal/") && strings.HasSuffix(path, "/kill") && req.Method == http.MethodPost:
+		r.apiTerminalKill(w, path)
 	// Schedule endpoints
 	case path == "/schedules" && req.Method == http.MethodGet:
 		r.apiGetSchedules(w, req)
@@ -219,6 +235,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiCreateSkill(w, req)
 	case strings.HasPrefix(path, "/skills/") && strings.HasSuffix(path, "/profiles") && req.Method == http.MethodGet:
 		r.apiGetSkillProfiles(w, req, path)
+	case strings.HasPrefix(path, "/skills/") && req.Method == http.MethodDelete:
+		r.apiDeleteSkill(w, req, path)
 	// Service discovery
 	case path == "/discover" && req.Method == http.MethodGet:
 		r.apiDiscover(w, req)
@@ -229,6 +247,19 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGetAgentQuota(w, req, path)
 	case strings.HasPrefix(path, "/quotas/") && req.Method == http.MethodPut:
 		r.apiSetAgentQuota(w, req, path)
+	case strings.HasPrefix(path, "/quotas/") && req.Method == http.MethodDelete:
+		r.apiDeleteQuota(w, req, path)
+	// Cycles CRUD
+	case path == "/cycles" && req.Method == http.MethodGet:
+		r.apiGetCycles(w, req)
+	case path == "/cycles" && req.Method == http.MethodPost:
+		r.apiCreateCycle(w, req)
+	case strings.HasPrefix(path, "/cycles/") && req.Method == http.MethodGet:
+		r.apiGetCycle(w, req, path)
+	case strings.HasPrefix(path, "/cycles/") && req.Method == http.MethodPut:
+		r.apiUpdateCycle(w, req, path)
+	case strings.HasPrefix(path, "/cycles/") && req.Method == http.MethodDelete:
+		r.apiDeleteCycle(w, req, path)
 	// Privilege escalation
 	case path == "/elevations" && req.Method == http.MethodGet:
 		r.apiGetElevations(w, req)
@@ -236,6 +267,30 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGrantElevation(w, req)
 	case strings.HasPrefix(path, "/elevations/") && req.Method == http.MethodDelete:
 		r.apiRevokeElevation(w, path)
+	// Custom events (user-defined event types)
+	case path == "/custom-events" && req.Method == http.MethodGet:
+		r.apiGetCustomEvents(w, req)
+	case path == "/custom-events" && req.Method == http.MethodPost:
+		r.apiCreateCustomEvent(w, req)
+	case strings.HasPrefix(path, "/custom-events/") && req.Method == http.MethodDelete:
+		r.apiDeleteCustomEvent(w, path)
+	// Workflow endpoints
+	case path == "/workflows" && req.Method == http.MethodGet:
+		r.apiGetWorkflows(w, req)
+	case path == "/workflows" && req.Method == http.MethodPost:
+		r.apiCreateWorkflow(w, req)
+	case strings.HasPrefix(path, "/workflows/") && strings.HasSuffix(path, "/execute") && req.Method == http.MethodPost:
+		r.apiExecuteWorkflow(w, req, path)
+	case strings.HasPrefix(path, "/workflows/") && strings.HasSuffix(path, "/runs") && req.Method == http.MethodGet:
+		r.apiGetWorkflowRuns(w, req, path)
+	case strings.HasPrefix(path, "/workflows/") && req.Method == http.MethodPut:
+		r.apiUpdateWorkflow(w, req, path)
+	case strings.HasPrefix(path, "/workflows/") && req.Method == http.MethodDelete:
+		r.apiDeleteWorkflow(w, path)
+	case strings.HasPrefix(path, "/workflows/") && req.Method == http.MethodGet:
+		r.apiGetWorkflow(w, path)
+	case strings.HasPrefix(path, "/workflow-runs/") && req.Method == http.MethodGet:
+		r.apiGetWorkflowRunDetail(w, path)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	}

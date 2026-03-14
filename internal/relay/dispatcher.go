@@ -11,8 +11,14 @@ import (
 )
 
 // fireTriggers queries matching triggers for the given project/event and spawns children.
+// Also fires any workflow DAGs that have matching trigger:event nodes.
 // Always called as a goroutine: go h.fireTriggers(project, event, meta)
 func (h *Handlers) fireTriggers(project, event string, meta map[string]string) {
+	// Fire workflow DAGs that match this event
+	if h.wfEngine != nil {
+		h.wfEngine.FireWorkflows(project, event, meta)
+	}
+
 	triggers := h.db.ListTriggers(project, event)
 	if len(triggers) == 0 {
 		return

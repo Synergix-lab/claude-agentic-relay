@@ -290,7 +290,7 @@ func resolveConflictTool() mcp.Tool {
 func registerProfileTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_profile",
-		mcp.WithDescription("Create or update a profile archetype. A profile defines a reusable agent role with a context pack (soul, skills, working style)."),
+		mcp.WithDescription("Create or update a profile archetype. A profile defines a reusable agent role with a context pack (soul, skills, working style). Profiles are the 'executables' of the Agent OS — any spawn slot running this profile inherits all its knowledge."),
 		projectParam,
 		mcp.WithString("slug", mcp.Description("Unique profile identifier (e.g. 'backend', 'frontend', 'devops')"), mcp.Required()),
 		mcp.WithString("name", mcp.Description("Display name for the profile"), mcp.Required()),
@@ -299,6 +299,8 @@ func registerProfileTool() mcp.Tool {
 		mcp.WithString("soul_keys", mcp.Description("Memory keys to load at boot. Accepts JSON string '[\"key1\",\"key2\"]' or native array.")),
 		mcp.WithString("skills", mcp.Description("Skill objects. Accepts JSON string or native array. Format: [{\"id\":\"...\",\"name\":\"...\",\"tags\":[...]}]")),
 		mcp.WithString("vault_paths", mcp.Description("Vault doc path patterns to auto-inject at boot. Accepts JSON string or native array. Supports globs: [\"guides/*.md\"]. {slug} is resolved to the profile slug.")),
+		mcp.WithString("allowed_tools", mcp.Description("Tool patterns this profile can use. JSON array. Examples: [\"mcp__agent-relay__*\",\"Bash\",\"mcp__context7__*\"]. Default: all tools.")),
+		mcp.WithNumber("pool_size", mcp.Description("Max concurrent spawns for this profile (default: 3). Set to 1 for singleton managers like CTO.")),
 	)
 }
 
@@ -842,5 +844,88 @@ func addNotifyChannelTool() mcp.Tool {
 		asParam,
 		projectParam,
 		mcp.WithString("target", mcp.Description("Target agent name to allow messaging to"), mcp.Required()),
+	)
+}
+
+// --- Spawn (fork/exec) tools ---
+
+func spawnTool() mcp.Tool {
+	return mcp.NewTool(
+		"spawn",
+		mcp.WithDescription("Spawn a child agent process (fork). Two modes:\n\n1. **Agent OS mode** (recommended): pass profile + cycle. The relay assembles the full context (identity, task, knowledge, rules, tools) from the DB. The agent opens its eyes knowing everything.\n\n2. **Legacy mode**: pass profile + prompt. Raw prompt is passed directly to claude.\n\nReturns immediately with child ID — executes asynchronously. Use list_children to monitor."),
+		asParam,
+		projectParam,
+		mcp.WithString("profile", mcp.Description("Profile slug for the child agent (e.g. 'backend', 'cto'). Must match a registered profile."), mcp.Required()),
+		mcp.WithString("cycle", mcp.Description("Cycle name (Agent OS mode). The relay loads the cycle prompt from the cycles table and assembles full context (identity, task, knowledge, rules). Examples: 'heartbeat-5min', 'execute-task', 'review-pr'.")),
+		mcp.WithString("task_id", mcp.Description("Task ID to load into context (Agent OS mode). The spawned agent receives the full task details.")),
+		mcp.WithString("prompt", mcp.Description("Raw prompt (legacy mode). Used only if 'cycle' is not set.")),
+		mcp.WithString("ttl", mcp.Description("Max execution time (default: from cycle TTL or '10m'). Accepts Go duration format: '5m', '1h', '30s'.")),
+	)
+}
+
+func killChildTool() mcp.Tool {
+	return mcp.NewTool(
+		"kill_child",
+		mcp.WithDescription("Terminate a running child agent by ID. Sends SIGTERM to the subprocess."),
+		asParam,
+		projectParam,
+		mcp.WithString("child_id", mcp.Description("Child agent ID (from spawn response)"), mcp.Required()),
+	)
+}
+
+func listChildrenTool() mcp.Tool {
+	return mcp.NewTool(
+		"list_children",
+		mcp.WithDescription("List spawned child agents. Shows running and recently finished children with their status, duration, and exit codes."),
+		asParam,
+		projectParam,
+		mcp.WithString("status", mcp.Description("Filter by status: 'running', 'finished', 'killed', or 'all' (default: 'all')"),
+			mcp.Enum("running", "finished", "killed", "all"),
+		),
+	)
+}
+
+// --- Schedule (crontab) tools ---
+
+func scheduleTool() mcp.Tool {
+	return mcp.NewTool(
+		"schedule",
+		mcp.WithDescription("Create or update a cron schedule. Two modes:\n\n1. **Agent OS mode**: set 'cycle' — the relay assembles full context at each trigger (profile + vault + memories + task).\n\n2. **Legacy mode**: set 'prompt' — raw prompt passed to claude each cycle.\n\nLike `crontab -e` for agents."),
+		asParam,
+		projectParam,
+		mcp.WithString("name", mcp.Description("Schedule name (unique per agent, e.g. 'daily-review', '5min-check')"), mcp.Required()),
+		mcp.WithString("cron_expr", mcp.Description("Cron expression (5-field: minute hour day month weekday). Examples: '*/5 * * * *' (every 5min), '0 9 * * *' (daily 9am), '0 */4 * * *' (every 4h)."), mcp.Required()),
+		mcp.WithString("cycle", mcp.Description("Cycle name (Agent OS mode). Loads the cycle prompt from the cycles table and assembles full context. Examples: 'heartbeat-5min', 'heartbeat-1h'.")),
+		mcp.WithString("prompt", mcp.Description("Raw prompt (legacy mode). Used only if 'cycle' is not set.")),
+		mcp.WithString("ttl", mcp.Description("Max execution time per cycle (default: from cycle TTL or '10m')")),
+	)
+}
+
+func unscheduleTool() mcp.Tool {
+	return mcp.NewTool(
+		"unschedule",
+		mcp.WithDescription("Remove a cron schedule. The agent will no longer be triggered on this schedule."),
+		asParam,
+		projectParam,
+		mcp.WithString("schedule_id", mcp.Description("Schedule ID to remove (from list_schedules)"), mcp.Required()),
+	)
+}
+
+func listSchedulesTool() mcp.Tool {
+	return mcp.NewTool(
+		"list_schedules",
+		mcp.WithDescription("List all cron schedules for an agent or project. Like `crontab -l`."),
+		asParam,
+		projectParam,
+	)
+}
+
+func triggerCycleTool() mcp.Tool {
+	return mcp.NewTool(
+		"trigger_cycle",
+		mcp.WithDescription("Manually trigger a scheduled cycle right now, without waiting for the cron timer. Like `systemctl start`."),
+		asParam,
+		projectParam,
+		mcp.WithString("schedule_id", mcp.Description("Schedule ID to trigger (from list_schedules)"), mcp.Required()),
 	)
 }

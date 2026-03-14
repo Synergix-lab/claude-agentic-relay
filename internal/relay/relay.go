@@ -17,6 +17,7 @@ import (
 	"agent-relay/internal/spawn"
 	"agent-relay/internal/vault"
 	"agent-relay/internal/web"
+	"agent-relay/internal/workflow"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -32,10 +33,12 @@ type Relay struct {
 	Events       *EventBus
 	SpawnMgr     *spawn.Manager
 	Scheduler    *scheduler.Scheduler
-	Handlers     *Handlers
-	Config       config.Config
-	httpServer   *http.Server
-	StartedAt    time.Time
+	PTYMgr         *spawn.PTYManager
+	Handlers       *Handlers
+	WorkflowEngine *workflow.Engine
+	Config         config.Config
+	httpServer     *http.Server
+	StartedAt      time.Time
 }
 
 // New creates a fully wired Relay with all tools registered.
@@ -62,13 +65,32 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 	sched := scheduler.New(slogger)
 
 	var spawnMgr *spawn.Manager
+	var ptyMgr *spawn.PTYManager
 	if executor.IsClaudeAvailable() {
 		spawnMgr = spawn.NewManager(database, executor, lockMgr, queue, sched, cfg.MaxPoolSize, slogger)
+		ptyMgr = spawn.NewPTYManager(executor)
 		handlers.SetSpawnManager(spawnMgr)
-		logger.Println("spawn: claude binary found, spawn/schedule enabled")
+		logger.Println("spawn: claude binary found, spawn/schedule/terminal enabled")
 	} else {
 		logger.Println("spawn: claude binary not found, spawn/schedule disabled")
 	}
+
+	// Initialize workflow engine
+	wfEngine := workflow.NewEngine(database, spawnMgr)
+	// Wire message and task functions so workflows can send messages and dispatch tasks
+	wfEngine.SetMessageFunc(func(project, from, to, msgType, subject, content string) error {
+		_, err := database.InsertMessage(project, from, to, msgType, subject, content, "{}", "P2", 0, nil, nil)
+		return err
+	})
+	wfEngine.SetTaskFunc(func(project, profile, title, desc string) (string, error) {
+		task, err := database.DispatchTask(project, profile, "workflow-engine", title, desc, "P2", nil, nil, nil)
+		if err != nil {
+			return "", err
+		}
+		return task.ID, nil
+	})
+
+	handlers.SetWorkflowEngine(wfEngine)
 
 	// Register all tools
 	mcpSrv.AddTools(
@@ -171,18 +193,20 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 	)
 
 	return &Relay{
-		MCPServer:    mcpSrv,
-		HTTP:         httpSrv,
-		DB:           database,
-		Registry:     registry,
-		Ingester:     ingester,
-		VaultWatcher: vaultWatcher,
-		Events:       events,
-		SpawnMgr:     spawnMgr,
-		Scheduler:    sched,
-		Handlers:     handlers,
-		Config:       cfg,
-		StartedAt:    time.Now().UTC(),
+		MCPServer:      mcpSrv,
+		HTTP:           httpSrv,
+		DB:             database,
+		Registry:       registry,
+		Ingester:       ingester,
+		VaultWatcher:   vaultWatcher,
+		Events:         events,
+		SpawnMgr:       spawnMgr,
+		PTYMgr:         ptyMgr,
+		Scheduler:      sched,
+		Handlers:       handlers,
+		WorkflowEngine: wfEngine,
+		Config:         cfg,
+		StartedAt:      time.Now().UTC(),
 	}
 }
 

@@ -582,6 +582,28 @@ func (r *Relay) apiGetSkills(w http.ResponseWriter, req *http.Request) {
 	if project == "" {
 		project = "default"
 	}
+
+	// If agent slug is given, return skills linked to that profile with proficiency
+	if agent := req.URL.Query().Get("agent"); agent != "" {
+		profile, err := r.DB.GetProfile(project, agent)
+		if err != nil || profile == nil {
+			writeJSON(w, []any{})
+			return
+		}
+		links, err := r.DB.GetProfileSkillLinks(profile.ID)
+		if err != nil || links == nil {
+			writeJSON(w, []any{})
+			return
+		}
+		// Add agent field so the frontend can filter
+		for i := range links {
+			links[i]["agent"] = agent
+		}
+		b, _ := json.Marshal(links)
+		w.Write(b)
+		return
+	}
+
 	skills, err := r.DB.ListSkills(project)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "list skills failed", err)
@@ -601,6 +623,8 @@ func (r *Relay) apiCreateSkill(w http.ResponseWriter, req *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Tags        string `json:"tags"`
+		Agent       string `json:"agent"`       // optional: auto-link to this profile
+		Proficiency int    `json:"proficiency"` // 1-5, mapped to text
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON", err)
@@ -619,6 +643,23 @@ func (r *Relay) apiCreateSkill(w http.ResponseWriter, req *http.Request) {
 		apiError(w, http.StatusInternalServerError, "create skill failed", err)
 		return
 	}
+
+	// Auto-link to profile if agent is specified
+	if body.Agent != "" {
+		profile, err := r.DB.GetProfile(body.Project, body.Agent)
+		if err == nil && profile != nil {
+			prof := "capable"
+			if body.Proficiency >= 5 {
+				prof = "expert"
+			} else if body.Proficiency >= 3 {
+				prof = "capable"
+			} else if body.Proficiency >= 1 {
+				prof = "learning"
+			}
+			_ = r.DB.LinkProfileSkill(profile.ID, skill.ID, prof)
+		}
+	}
+
 	b, _ := json.Marshal(skill)
 	w.WriteHeader(http.StatusCreated)
 	w.Write(b)
@@ -820,4 +861,256 @@ func (r *Relay) apiRevokeElevation(w http.ResponseWriter, path string) {
 	}
 	b, _ := json.Marshal(map[string]any{"id": id, "status": "revoked"})
 	w.Write(b)
+}
+
+// --- Agent management ---
+
+// DELETE /api/agents/:name?project=X
+func (r *Relay) apiDeactivateAgent(w http.ResponseWriter, req *http.Request, path string) {
+	name := strings.TrimPrefix(path, "/agents/")
+	name = strings.TrimSuffix(name, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+
+	if err := r.DB.DeactivateAgent(project, name); err != nil {
+		apiError(w, http.StatusInternalServerError, "deactivate agent failed", err)
+		return
+	}
+	writeJSON(w, map[string]any{"agent": name, "status": "deactivated"})
+}
+
+// --- Profile management ---
+
+// POST /api/profiles
+func (r *Relay) apiCreateProfile(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Project      string `json:"project"`
+		Slug         string `json:"slug"`
+		Name         string `json:"name"`
+		Role         string `json:"role"`
+		ContextPack  string `json:"context_pack"`
+		SoulKeys     string `json:"soul_keys"`
+		Skills       string `json:"skills"`
+		VaultPaths   string `json:"vault_paths"`
+		AllowedTools string `json:"allowed_tools"`
+		PoolSize     int    `json:"pool_size"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON", err)
+		return
+	}
+	if body.Project == "" {
+		body.Project = "default"
+	}
+	if body.Slug == "" {
+		http.Error(w, `{"error":"slug is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var opts []db.ProfileOption
+	if body.AllowedTools != "" {
+		opts = append(opts, db.WithAllowedTools(body.AllowedTools))
+	}
+	if body.PoolSize > 0 {
+		opts = append(opts, db.WithPoolSize(body.PoolSize))
+	}
+
+	profile, err := r.DB.RegisterProfile(body.Project, body.Slug, body.Name, body.Role, body.ContextPack, body.SoulKeys, body.Skills, body.VaultPaths, opts...)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "create profile failed", err)
+		return
+	}
+	b, _ := json.Marshal(profile)
+	w.WriteHeader(http.StatusCreated)
+	w.Write(b)
+}
+
+// PUT /api/profiles/:slug?project=X
+func (r *Relay) apiUpdateProfile(w http.ResponseWriter, req *http.Request, path string) {
+	slug := strings.TrimPrefix(path, "/profiles/")
+	slug = strings.TrimSuffix(slug, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+
+	var body struct {
+		Name         string `json:"name"`
+		Role         string `json:"role"`
+		ContextPack  string `json:"context_pack"`
+		SoulKeys     string `json:"soul_keys"`
+		Skills       string `json:"skills"`
+		VaultPaths   string `json:"vault_paths"`
+		AllowedTools string `json:"allowed_tools"`
+		PoolSize     int    `json:"pool_size"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON", err)
+		return
+	}
+
+	var opts []db.ProfileOption
+	if body.AllowedTools != "" {
+		opts = append(opts, db.WithAllowedTools(body.AllowedTools))
+	}
+	if body.PoolSize > 0 {
+		opts = append(opts, db.WithPoolSize(body.PoolSize))
+	}
+
+	profile, err := r.DB.RegisterProfile(project, slug, body.Name, body.Role, body.ContextPack, body.SoulKeys, body.Skills, body.VaultPaths, opts...)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "update profile failed", err)
+		return
+	}
+	writeJSON(w, profile)
+}
+
+// DELETE /api/profiles/:slug?project=X
+func (r *Relay) apiDeleteProfile(w http.ResponseWriter, req *http.Request, path string) {
+	slug := strings.TrimPrefix(path, "/profiles/")
+	slug = strings.TrimSuffix(slug, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+
+	if err := r.DB.DeleteProfile(project, slug); err != nil {
+		apiError(w, http.StatusInternalServerError, "delete profile failed", err)
+		return
+	}
+	writeJSON(w, map[string]any{"slug": slug, "status": "deleted"})
+}
+
+// DELETE /api/skills/:name?project=X
+func (r *Relay) apiDeleteSkill(w http.ResponseWriter, req *http.Request, path string) {
+	name := strings.TrimPrefix(path, "/skills/")
+	name = strings.TrimSuffix(name, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+
+	if err := r.DB.DeleteSkill(project, name); err != nil {
+		apiError(w, http.StatusInternalServerError, "delete skill failed", err)
+		return
+	}
+	writeJSON(w, map[string]any{"name": name, "status": "deleted"})
+}
+
+// DELETE /api/quotas/:agent?project=X
+func (r *Relay) apiDeleteQuota(w http.ResponseWriter, req *http.Request, path string) {
+	agent := strings.TrimPrefix(path, "/quotas/")
+	agent = strings.TrimSuffix(agent, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+
+	if err := r.DB.DeleteQuota(project, agent); err != nil {
+		apiError(w, http.StatusInternalServerError, "delete quota failed", err)
+		return
+	}
+	writeJSON(w, map[string]any{"agent": agent, "status": "deleted"})
+}
+
+// --- Cycles CRUD ---
+
+func (r *Relay) apiGetCycles(w http.ResponseWriter, req *http.Request) {
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+	cycles, err := r.DB.ListCycles(project)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "list cycles", err)
+		return
+	}
+	if cycles == nil {
+		cycles = []models.Cycle{}
+	}
+	writeJSON(w, cycles)
+}
+
+func (r *Relay) apiGetCycle(w http.ResponseWriter, req *http.Request, path string) {
+	name := strings.TrimPrefix(path, "/cycles/")
+	name = strings.TrimSuffix(name, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+	cycle, err := r.DB.GetCycle(project, name)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "get cycle", err)
+		return
+	}
+	if cycle == nil {
+		apiError(w, http.StatusNotFound, "cycle not found", nil)
+		return
+	}
+	writeJSON(w, cycle)
+}
+
+func (r *Relay) apiCreateCycle(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Project string `json:"project"`
+		Name    string `json:"name"`
+		Prompt  string `json:"prompt"`
+		TTL     int    `json:"ttl"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON", err)
+		return
+	}
+	if body.Project == "" {
+		body.Project = "default"
+	}
+	if body.Name == "" {
+		apiError(w, http.StatusBadRequest, "name required", nil)
+		return
+	}
+	cycle, err := r.DB.UpsertCycle(body.Project, body.Name, body.Prompt, body.TTL)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "create cycle", err)
+		return
+	}
+	writeJSON(w, cycle)
+}
+
+func (r *Relay) apiUpdateCycle(w http.ResponseWriter, req *http.Request, path string) {
+	name := strings.TrimPrefix(path, "/cycles/")
+	name = strings.TrimSuffix(name, "/")
+	var body struct {
+		Project string `json:"project"`
+		Prompt  string `json:"prompt"`
+		TTL     int    `json:"ttl"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON", err)
+		return
+	}
+	if body.Project == "" {
+		body.Project = "default"
+	}
+	cycle, err := r.DB.UpsertCycle(body.Project, name, body.Prompt, body.TTL)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "update cycle", err)
+		return
+	}
+	writeJSON(w, cycle)
+}
+
+func (r *Relay) apiDeleteCycle(w http.ResponseWriter, req *http.Request, path string) {
+	name := strings.TrimPrefix(path, "/cycles/")
+	name = strings.TrimSuffix(name, "/")
+	project := req.URL.Query().Get("project")
+	if project == "" {
+		project = "default"
+	}
+	if err := r.DB.DeleteCycle(project, name); err != nil {
+		apiError(w, http.StatusInternalServerError, "delete cycle", err)
+		return
+	}
+	writeJSON(w, map[string]any{"name": name, "status": "deleted"})
 }

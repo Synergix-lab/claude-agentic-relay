@@ -185,35 +185,104 @@ main {
 }
 
 /* Layout modes */
-main.mode-canvas #canvas-container { flex: 2; }
+#left-column {
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+  min-width: 200px;
+  overflow: visible;
+}
+
+main.mode-canvas #left-column { flex: 2; }
 main.mode-canvas #kanban-panel { display: none; }
 
-main.mode-detail #canvas-container { flex: 1; }
+main.mode-detail #left-column { flex: 1; }
 main.mode-detail #messages-panel { flex: 1; }
 main.mode-detail #kanban-panel { display: none; }
 
-main.mode-kanban #canvas-container { display: none !important; }
+main.mode-kanban #left-column { display: none !important; }
 main.mode-kanban #kanban-panel { flex: 1; display: flex !important; }
 main.mode-kanban #messages-panel { display: none !important; }
 main.mode-kanban #memories-panel { display: none !important; }
 main.mode-kanban #tasks-panel { display: none !important; }
 main.mode-kanban #vault-panel { display: none !important; }
+main.mode-kanban #ops-panel { display: none !important; }
 
-main.mode-vault #canvas-container { display: none !important; }
+main.mode-vault #left-column { display: none !important; }
 main.mode-vault #vault-panel { flex: 1; display: flex !important; }
 main.mode-vault #kanban-panel { display: none !important; }
 main.mode-vault #messages-panel { display: none !important; }
 main.mode-vault #memories-panel { display: none !important; }
 main.mode-vault #tasks-panel { display: none !important; }
+main.mode-vault #ops-panel { display: none !important; }
+
+main.mode-ops #left-column { display: none !important; }
+main.mode-ops #ops-panel { flex: 1; display: flex !important; }
+main.mode-ops #kanban-panel { display: none !important; }
+main.mode-ops #vault-panel { display: none !important; }
+main.mode-ops #messages-panel { display: none !important; }
+main.mode-ops #memories-panel { display: none !important; }
+main.mode-ops #tasks-panel { display: none !important; }
 
 main.mode-canvas #vault-panel { display: none; }
+main.mode-canvas #ops-panel { display: none; }
 main.mode-detail #vault-panel { display: none; }
+main.mode-detail #ops-panel { display: none; }
+
+/* Agent focused: hide sidebar, full-width canvas+command panel */
+main.agent-focused #messages-panel,
+main.agent-focused #memories-panel,
+main.agent-focused #tasks-panel { display: none !important; }
+main.agent-focused #left-column { flex: 1; }
+/* Also hide header sidebar tabs when agent focused */
+main.agent-focused ~ #_dummy_ { /* selector anchor — real rule below */ }
+body:has(main.agent-focused) .header-tabs { opacity: 0.3; pointer-events: none; }
+
+#ops-panel {
+  flex-direction: column;
+  overflow: hidden;
+}
 
 #canvas-container {
-  flex: 2;
+  flex: 1;
   position: relative;
   overflow: hidden;
-  min-width: 200px;
+  min-height: 0;
+}
+
+/* Command Panel */
+#command-panel {
+  height: 280px;
+  min-height: 120px;
+  max-height: 60vh;
+  background: rgba(15, 15, 35, 0.98);
+  border-top: 2px solid rgba(108, 92, 231, 0.7);
+  box-shadow: 0 -4px 20px rgba(108, 92, 231, 0.15), inset 0 1px 0 rgba(108, 92, 231, 0.2);
+  overflow-y: auto;
+  display: none;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+body.view-colony #command-panel {
+  display: flex !important;
+}
+
+#cmd-resize-handle {
+  height: 6px;
+  cursor: ns-resize;
+  background: linear-gradient(180deg, rgba(108, 92, 231, 0.15), rgba(108, 92, 231, 0.05));
+  border-top: 1px solid rgba(108, 92, 231, 0.4);
+  border-bottom: 1px solid rgba(108, 92, 231, 0.3);
+  flex-shrink: 0;
+  display: none;
+}
+body.view-colony #cmd-resize-handle {
+  display: block !important;
+}
+
+#cmd-resize-handle:hover {
+  background: rgba(108, 92, 231, 0.3);
+  box-shadow: 0 0 8px rgba(108, 92, 231, 0.4);
 }
 
 /* Colony zoom-in flash transition */
@@ -1178,7 +1247,7 @@ body.view-galaxy #memories-panel,
 body.view-galaxy #tasks-panel { display: none !important; }
 body.view-galaxy #kanban-panel { display: none !important; }
 body.view-galaxy #vault-panel { display: none !important; }
-body.view-galaxy #canvas-container { flex: 1 !important; }
+body.view-galaxy #left-column { flex: 1 !important; }
 body.view-galaxy .font-scale-toggle { display: none !important; }
 
 /* Colony mode: show everything normally */

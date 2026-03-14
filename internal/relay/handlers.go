@@ -28,6 +28,17 @@ type Handlers struct {
 	events       *EventBus
 	tokenCh      chan db.TokenRecord
 	spawnMgr     *spawn.Manager
+	wfEngine     WorkflowFirer
+}
+
+// WorkflowFirer is the interface the dispatcher uses to fire workflows.
+type WorkflowFirer interface {
+	FireWorkflows(project, event string, meta map[string]string)
+}
+
+// SetWorkflowEngine connects the workflow engine for event-driven execution.
+func (h *Handlers) SetWorkflowEngine(engine WorkflowFirer) {
+	h.wfEngine = engine
 }
 
 func NewHandlers(database *db.DB, registry *SessionRegistry, ingester *ingest.Ingester, vaultWatcher *vault.Watcher, events *EventBus) *Handlers {

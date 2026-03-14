@@ -5,6 +5,8 @@ import { APIClient } from "./api-client.js";
 import { MessageOrb } from "./message-orb.js";
 import { KanbanBoard } from "./kanban.js";
 import { VaultBrowser } from "./vault.js";
+import { OpsConsole } from "./ops.js";
+import { CommandPanel } from "./command-panel.js";
 import { ShortcutManager } from "./shortcuts.js";
 import { ConnectionOverlay } from "./connections.js";
 import { MCPEffects } from "./mcp-effects.js";
@@ -1154,7 +1156,10 @@ function openDetail(av) {
 
   focusedAgent = agentKey(av.project, av.name);
   focusedTeam = null;
-  detailPanel.classList.add("open");
+  // Side drawer no longer opens — command panel handles everything
+  detailPanel.classList.remove("open");
+  // Hide sidebar panels when agent focused — full width for canvas+command panel
+  document.getElementById("main").classList.add("agent-focused");
 
   // ── MACRO: Identity ──
   detailName.textContent = av.name;
@@ -1331,6 +1336,39 @@ function openDetail(av) {
   // Token usage
   updateAgentTokenDetail(av.project, av.name);
 
+  // Skills
+  const detailSkillsEl = document.getElementById("detail-skills");
+  if (detailSkillsEl) {
+    client.fetchSkills(av.project).then(skills => {
+      // Filter to skills linked to this agent's profile
+      const agentSkills = skills.filter(s => {
+        // If skill has profiles, check if agent is in them
+        return true; // Show all skills for now, profiles loaded on expand
+      });
+      OpsConsole.renderSkillsSection(detailSkillsEl, agentSkills);
+    });
+  }
+
+  // Quotas
+  const detailQuotasEl = document.getElementById("detail-quotas");
+  if (detailQuotasEl) {
+    client.fetchAgentQuota(av.name, av.project).then(quota => {
+      OpsConsole.renderQuotasSection(detailQuotasEl, quota);
+    });
+  }
+
+  // Elevation
+  const detailElevationEl = document.getElementById("detail-elevation");
+  if (detailElevationEl) {
+    client.fetchElevations(av.project).then(elevations => {
+      const agentElevations = (elevations || []).filter(e =>
+        (e.agent === av.name || e.profile_slug === av.name) &&
+        (!e.expires_at || new Date(e.expires_at) > Date.now())
+      );
+      OpsConsole.renderElevationSection(detailElevationEl, agentElevations, client, av.project, av.name);
+    });
+  }
+
   // Nav label
   const keys = getAgentKeys();
   const currentIdx = keys.indexOf(focusedAgent);
@@ -1345,10 +1383,65 @@ function openDetail(av) {
   }
 
   loadMessages();
+
+  // Feed command panel with ALL agent data (replaces side drawer)
+  (async () => {
+    const slug = av.name;
+    const [profile, quota, skills, allMsgs, spawnChildren] = await Promise.all([
+      client.fetchProfile(slug, av.project),
+      client.fetchAgentQuota(slug, av.project),
+      client.fetchSkills(av.project, slug),
+      client.fetchAllMessagesAllProjects(),
+      client.fetchSpawnChildren(av.project, slug, ''),
+    ]);
+
+    // Agent tasks
+    const agentTasks = allTasks.filter(t => {
+      const tp = t.project || "default";
+      return tp === av.project && (t.assigned_to === av.name || t.dispatched_by === av.name);
+    }).filter(t => t.status !== "done").slice(0, 10);
+
+    // Recent messages
+    const agentMsgs = allMsgs.filter(m => {
+      const mp = m.project || "default";
+      return mp === av.project && (m.from === av.name || m.to === av.name);
+    }).slice(-8).reverse();
+
+    // Direct reports
+    const directReports = agentsData
+      .filter(a => a.reports_to === av.name && (a.project || "default") === av.project)
+      .map(a => a.name);
+
+    // Nav label
+    const keys = getAgentKeys();
+    const idx = keys.indexOf(focusedAgent);
+
+    const agentData = {
+      ...av,
+      slug: profile?.slug || slug,
+      name: profile?.name || av.name,
+      role: profile?.role || av.role,
+      context_pack: profile?.context_pack || '',
+      vault_paths: profile?.vault_paths || '',
+      allowed_tools: profile?.allowed_tools || '',
+      pool_size: profile?.pool_size || 1,
+      _quota: quota || {},
+      _skills: skills || [],
+      _tasks: agentTasks,
+      _recentMsgs: agentMsgs,
+      _reportsTo: av._reportsTo,
+      _directReports: directReports,
+      _teams: av._teams || [],
+      _spawnChildren: spawnChildren || [],
+      _navLabel: `${idx + 1} / ${keys.length}`,
+    };
+    commandPanel.setAgent(agentData);
+  })();
 }
 
 detailClose.addEventListener("click", () => {
   detailPanel.classList.remove("open");
+  document.getElementById("main").classList.remove("agent-focused");
   focusedAgent = null;
   // Restore all agents + clear selection ring
   for (const [, av] of agentViews) {
@@ -1356,6 +1449,7 @@ detailClose.addEventListener("click", () => {
     av.dimMode = false;
     av.selected = false;
   }
+  commandPanel.clearAgent();
   loadMessages();
 });
 
@@ -1562,6 +1656,7 @@ canvas.addEventListener("click", (e) => {
 
   // 4. Colony: click on empty space → clear focus (stay in colony)
   detailPanel.classList.remove("open");
+  document.getElementById("main").classList.remove("agent-focused");
   focusedAgent = null;
   focusedTeam = null;
   for (const [, av] of agentViews) {
@@ -1569,6 +1664,7 @@ canvas.addEventListener("click", (e) => {
     av.highlighted = true;
     av.dimMode = false;
   }
+  commandPanel.clearAgent();
   loadMessages();
 });
 
@@ -1790,7 +1886,7 @@ tabMessages.addEventListener("click", () => {
   messagesPanel.classList.remove("hidden");
   memoriesPanel.classList.add("hidden");
   tasksPanel.classList.add("hidden");
-  if (currentMode === "kanban" || currentMode === "vault") setMode("canvas");
+  if (currentMode === "kanban" || currentMode === "vault" || currentMode === "ops") setMode("canvas");
 });
 
 tabMemories.addEventListener("click", () => {
@@ -1801,7 +1897,7 @@ tabMemories.addEventListener("click", () => {
   memoriesPanel.classList.remove("hidden");
   messagesPanel.classList.add("hidden");
   tasksPanel.classList.add("hidden");
-  if (currentMode === "kanban" || currentMode === "vault") setMode("canvas");
+  if (currentMode === "kanban" || currentMode === "vault" || currentMode === "ops") setMode("canvas");
   loadMemories();
 });
 
@@ -1821,7 +1917,7 @@ tabTasks.addEventListener("click", () => {
   tasksPanel.classList.remove("hidden");
   messagesPanel.classList.add("hidden");
   memoriesPanel.classList.add("hidden");
-  if (currentMode === "kanban" || currentMode === "vault") setMode("canvas");
+  if (currentMode === "kanban" || currentMode === "vault" || currentMode === "ops") setMode("canvas");
   loadTasks();
 });
 
@@ -2351,7 +2447,7 @@ function updateConvFilterOptions() {
 
 // --- Layout modes ---
 
-let currentMode = "canvas"; // "canvas" | "detail" | "kanban" | "vault"
+let currentMode = "canvas"; // "canvas" | "detail" | "kanban" | "vault" | "ops"
 let viewMode = "galaxy"; // "galaxy" | "colony" — top-level screen state
 let projectsData = []; // cached ProjectInfo[] from /api/projects
 let colonyProject = null; // project name when in colony view
@@ -2359,7 +2455,7 @@ let colonyProject = null; // project name when in colony view
 function setMode(mode) {
   currentMode = mode;
   const main = document.getElementById("main");
-  main.classList.remove("mode-canvas", "mode-detail", "mode-kanban", "mode-vault");
+  main.classList.remove("mode-canvas", "mode-detail", "mode-kanban", "mode-vault", "mode-ops");
 
   // Update header mode buttons
   document.querySelectorAll(".mode-btn").forEach(btn => {
@@ -2403,8 +2499,15 @@ function setMode(mode) {
     vaultBrowser.hide();
   }
 
-  // Messages panel: hidden in kanban/vault mode
-  if (mode === "kanban" || mode === "vault") {
+  // Show/hide ops
+  if (mode === "ops") {
+    opsConsole.show(focusedProject || "default");
+  } else {
+    opsConsole.hide();
+  }
+
+  // Messages panel: hidden in kanban/vault/ops mode
+  if (mode === "kanban" || mode === "vault" || mode === "ops") {
     messagesPanel.classList.add("hidden");
     memoriesPanel.classList.add("hidden");
     tasksPanel.classList.add("hidden");
@@ -2597,10 +2700,12 @@ function setViewMode(mode, project) {
     focusedAgent = null;
     focusedTeam = null;
     detailPanel.classList.remove("open");
+    document.getElementById("main").classList.remove("agent-focused");
     setMode("canvas");
     if (questTracker) questTracker.classList.add("hidden");
     stopTokenPolling();
     startGalaxyTokenPolling();
+    commandPanel.hide();
     // Defer layout to after DOM reflow so engine.width reflects new container size
     requestAnimationFrame(() => { engine.resize(); layoutAgents(); updateHierarchyLinks(); });
   } else if (mode === "colony" && project) {
@@ -2610,6 +2715,7 @@ function setViewMode(mode, project) {
     focusedTeam = null;
     if (colonyProjectNameEl) colonyProjectNameEl.textContent = project.toUpperCase();
     setMode("canvas");
+    commandPanel.show(project);
     requestAnimationFrame(() => { engine.resize(); layoutAgents(); updateHierarchyLinks(); });
     loadMessages();
     if (activeTab === "tasks") renderTasks();
@@ -2894,6 +3000,11 @@ const vaultPanel = document.getElementById("vault-panel");
 const vaultBrowser = new VaultBrowser(vaultPanel);
 vaultBrowser.hide();
 
+// --- Ops console (early init, client wired later) ---
+const opsPanel = document.getElementById("ops-panel");
+const opsConsole = new OpsConsole(opsPanel);
+opsConsole.hide();
+
 vaultBrowser.onSearch = async (query) => {
   const project = focusedProject || "";
   const result = await client.searchVaultDocs(project, query);
@@ -2924,6 +3035,9 @@ shortcuts.register("2", "mode-kanban", "Kanban view", () => {
 });
 shortcuts.register("3", "mode-vault", "Docs view", () => {
   if (viewMode === "colony") setMode("vault");
+});
+shortcuts.register("4", "mode-ops", "Ops view", () => {
+  if (viewMode === "colony") setMode("ops");
 });
 
 // Colony sidebar tabs
@@ -2970,7 +3084,7 @@ shortcuts.register("ArrowDown", "colony-next", "Next colony", () => {
   setViewMode("colony", names[next]);
 });
 shortcuts.register("/", "search", "Focus search", () => {
-  if (viewMode !== "colony" || currentMode === "kanban") return;
+  if (viewMode !== "colony" || currentMode === "kanban" || currentMode === "ops") return;
   if (msgSearchInput) msgSearchInput.focus();
 });
 shortcuts.register("n", "new-task", "New task", () => {
@@ -3016,6 +3130,39 @@ shortcuts.start();
 console.log("[relay] UI initializing...");
 const client = new APIClient(onAgents, onConversations, onNewMessages, onNewTasks, onActivity);
 kanbanBoard.apiClient = client;
+
+// --- Command panel (wire client) ---
+const commandPanel = new CommandPanel(
+  document.getElementById('command-panel'),
+  document.getElementById('cmd-resize-handle')
+);
+commandPanel.setClient(client);
+
+// --- Command panel navigation ---
+commandPanel.onNavigate = (arg) => {
+  if (typeof arg === 'number') {
+    // +1 or -1: prev/next agent
+    const keys = getAgentKeys();
+    if (!keys.length) return;
+    navIndex = (navIndex + arg + keys.length) % keys.length;
+    const av = agentViews.get(keys[navIndex]);
+    if (av) { av.triggerRipple(); openDetail(av); }
+  } else if (typeof arg === 'string') {
+    // Agent name: navigate to specific agent (hierarchy click)
+    const key = agentKey(colonyProject || 'default', arg);
+    const av = agentViews.get(key);
+    if (av) { av.triggerRipple(); openDetail(av); }
+  }
+};
+
+// --- Ops console (wire client) ---
+opsConsole.client = client;
+opsConsole.onAgentClick = (project, name) => {
+  const key = agentKey(project, name);
+  const av = agentViews.get(key);
+  if (av) { av.triggerRipple(); openDetail(av); }
+};
+
 client.onGoals = (goals) => {
   if (currentMode === "kanban") {
     kanbanBoard.setGoals(goals);
