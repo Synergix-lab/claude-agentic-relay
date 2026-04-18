@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -46,6 +47,14 @@ flags:
 	currentVersion := getCurrentVersion()
 	fmt.Printf("  current: %s\n", currentVersion)
 
+	// 1b. Refuse to update a dev/unknown build — would overwrite local work
+	if !force && isDevBuild(currentVersion) {
+		fmt.Println("\n  dev build detected — skipping auto-update to avoid overwriting local work")
+		fmt.Println("  to rebuild from current source: make build")
+		fmt.Println("  to force download of a release: agent-relay update --force")
+		return
+	}
+
 	// 2. Get latest version from GitHub
 	fmt.Print("  checking latest release... ")
 	latestVersion, err := getLatestVersion()
@@ -56,8 +65,14 @@ flags:
 	fmt.Printf("%s\n", latestVersion)
 
 	// 3. Compare
-	if !force && currentVersion == latestVersion {
+	cmp := compareSemver(currentVersion, latestVersion)
+	if !force && cmp == 0 {
 		fmt.Println("\n  already up to date")
+		return
+	}
+	if !force && cmp > 0 {
+		fmt.Printf("\n  local version %s is ahead of latest release %s — nothing to update\n", currentVersion, latestVersion)
+		fmt.Println("  use --force to install the release anyway (will downgrade)")
 		return
 	}
 
@@ -91,6 +106,56 @@ flags:
 	newVersion := getCurrentVersion()
 	fmt.Printf("%s\n", newVersion)
 	fmt.Println("\n  update complete")
+}
+
+// isDevBuild returns true for versions produced from unclean source trees
+// or binaries built without -ldflags. Auto-update would destroy local work.
+func isDevBuild(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" || v == "dev" || v == "unknown" {
+		return true
+	}
+	return strings.Contains(v, "-dirty") || strings.Contains(v, "-g") && strings.Count(v, "-") >= 2
+}
+
+// compareSemver returns -1, 0, or 1 for a<b, a==b, a>b. Tolerates dev suffixes
+// (treats "v0.5.0-5-g7eba408-dirty" as > "v0.5.0").
+func compareSemver(a, b string) int {
+	ai, adev := parseSemver(a)
+	bi, bdev := parseSemver(b)
+	for i := 0; i < 3; i++ {
+		if ai[i] != bi[i] {
+			if ai[i] < bi[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	// Equal base → dev suffix wins
+	if adev && !bdev {
+		return 1
+	}
+	if !adev && bdev {
+		return -1
+	}
+	return 0
+}
+
+func parseSemver(v string) ([3]int, bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
+	dev := false
+	if i := strings.Index(v, "-"); i >= 0 {
+		dev = true
+		v = v[:i]
+	}
+	parts := strings.SplitN(v, ".", 3)
+	out := [3]int{0, 0, 0}
+	for i := 0; i < len(parts) && i < 3; i++ {
+		if n, err := strconv.Atoi(parts[i]); err == nil {
+			out[i] = n
+		}
+	}
+	return out, dev
 }
 
 func getCurrentVersion() string {
