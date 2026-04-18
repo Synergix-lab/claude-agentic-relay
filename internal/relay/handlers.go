@@ -376,7 +376,18 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 		ExcludeBroadcasts: req.GetBool("exclude_broadcasts", false),
 	}
 
-	messages, err := h.db.GetInbox(project, agent, unreadOnly, limit, filter)
+	// Budget mode needs a 2-step flow: fetch without surfacing, prune, then surface
+	// only the survivors. Otherwise messages dropped by the budget filter would be
+	// marked 'surfaced' and invisible on the next poll.
+	var (
+		messages []models.Message
+		err      error
+	)
+	if budgetMode && h.db.HasDeliveries() {
+		messages, err = h.db.FetchInboxDeliveries(project, agent, unreadOnly, limit, filter)
+	} else {
+		messages, err = h.db.GetInbox(project, agent, unreadOnly, limit, filter)
+	}
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get inbox: %v", err)), nil
 	}
@@ -392,6 +403,14 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 			_ = json.Unmarshal([]byte(agentObj.InterestTags), &tags)
 			messages = applyBudget(messages, tags, agentObj.MaxContextBytes)
 		}
+		// Surface only the deliveries that survived the budget filter
+		var surviving []string
+		for _, m := range messages {
+			if m.DeliveryID != nil && m.DeliveryState != nil && *m.DeliveryState == "queued" {
+				surviving = append(surviving, *m.DeliveryID)
+			}
+		}
+		h.db.MarkDeliveriesSurfaced(surviving)
 	}
 
 	formatted := make([]map[string]any, len(messages))
