@@ -565,7 +565,15 @@ func (r *Relay) apiTestPollTrigger(w http.ResponseWriter, path string) {
 	id := strings.TrimSuffix(strings.TrimPrefix(path, "/poll-triggers/"), "/test")
 	matched, value, err := r.Handlers.PollOnceByID(id)
 	if err != nil {
-		apiError(w, http.StatusBadRequest, "poll test failed", err)
+		// Include the underlying cause so the UI can show what actually failed
+		// (network error, JSONPath miss, condition mismatch, etc.) rather than
+		// a generic "poll test failed".
+		b, _ := json.Marshal(map[string]any{
+			"error":   "poll test failed",
+			"details": err.Error(),
+		})
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(b)
 		return
 	}
 	b, _ := json.Marshal(map[string]any{
@@ -750,8 +758,14 @@ func (r *Relay) apiSetAgentQuota(w http.ResponseWriter, req *http.Request, path 
 		return
 	}
 
-	b, _ := json.Marshal(map[string]any{"agent": agent, "status": "updated"})
-	w.Write(b)
+	// Echo back the resulting quota so the caller can verify what was stored
+	// (previously the response only said "updated" even when all fields were 0).
+	quota, _ := r.DB.GetAgentQuota(body.Project, agent)
+	if quota == nil {
+		writeJSON(w, map[string]any{"agent": agent, "status": "updated"})
+		return
+	}
+	writeJSON(w, quota)
 }
 
 // --- Service Discovery ---
@@ -937,30 +951,65 @@ func (r *Relay) apiUpdateProfile(w http.ResponseWriter, req *http.Request, path 
 		project = "default"
 	}
 
-	var body struct {
-		Name         string `json:"name"`
-		Role         string `json:"role"`
-		ContextPack  string `json:"context_pack"`
-		SoulKeys     string `json:"soul_keys"`
-		Skills       string `json:"skills"`
-		VaultPaths   string `json:"vault_paths"`
-		AllowedTools string `json:"allowed_tools"`
-		PoolSize     int    `json:"pool_size"`
-	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+	// Merge semantics: decode into a raw map so absent fields keep the current
+	// value. A prior bug wiped context_pack/soul_keys/skills/vault_paths to
+	// empty strings when the caller sent only {name, role}.
+	var raw map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&raw); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON", err)
 		return
 	}
 
-	var opts []db.ProfileOption
-	if body.AllowedTools != "" {
-		opts = append(opts, db.WithAllowedTools(body.AllowedTools))
-	}
-	if body.PoolSize > 0 {
-		opts = append(opts, db.WithPoolSize(body.PoolSize))
+	existing, err := r.DB.GetProfile(project, slug)
+	if err != nil || existing == nil {
+		apiError(w, http.StatusNotFound, "profile not found", err)
+		return
 	}
 
-	profile, err := r.DB.RegisterProfile(project, slug, body.Name, body.Role, body.ContextPack, body.SoulKeys, body.Skills, body.VaultPaths, opts...)
+	// Start from current values, overlay only the fields that were sent.
+	name := existing.Name
+	role := existing.Role
+	contextPack := existing.ContextPack
+	soulKeys := existing.SoulKeys
+	skills := existing.Skills
+	vaultPaths := existing.VaultPaths
+	allowedTools := existing.AllowedTools
+	poolSize := existing.PoolSize
+
+	if v, ok := raw["name"].(string); ok {
+		name = v
+	}
+	if v, ok := raw["role"].(string); ok {
+		role = v
+	}
+	if v, ok := raw["context_pack"].(string); ok {
+		contextPack = v
+	}
+	if v, ok := raw["soul_keys"].(string); ok {
+		soulKeys = v
+	}
+	if v, ok := raw["skills"].(string); ok {
+		skills = v
+	}
+	if v, ok := raw["vault_paths"].(string); ok {
+		vaultPaths = v
+	}
+	if v, ok := raw["allowed_tools"].(string); ok {
+		allowedTools = v
+	}
+	if v, ok := raw["pool_size"].(float64); ok && int(v) > 0 {
+		poolSize = int(v)
+	}
+
+	var opts []db.ProfileOption
+	if allowedTools != "" {
+		opts = append(opts, db.WithAllowedTools(allowedTools))
+	}
+	if poolSize > 0 {
+		opts = append(opts, db.WithPoolSize(poolSize))
+	}
+
+	profile, err := r.DB.RegisterProfile(project, slug, name, role, contextPack, soulKeys, skills, vaultPaths, opts...)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "update profile failed", err)
 		return

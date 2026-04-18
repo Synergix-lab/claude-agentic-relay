@@ -24,7 +24,7 @@ Your AI agents are robots. Your projects are planets. You run the galaxy.
 
 <img src="docs/screenshots/galaxy-view.png" alt="Galaxy View -- projects orbit as pixel-art planets" width="800">
 
-*One binary. One SQLite file. 67 MCP tools. Zero required config.*
+*One binary. One SQLite file. 76 MCP tools. Zero required config.*
 
 **Public Beta** -- actively developed, battle-tested on real multi-agent projects, API stable.
 Breaking changes possible before 1.0 but will be documented.
@@ -163,7 +163,7 @@ create_project({ name: "my-app", cwd: "/path/to/repo", interactive: true })
 
 ## &#x2728; How It Works
 
-Most of the 67 MCP tools weren't designed by a human. Multiple teams of agents at [synergix-lab](https://github.com/synergix-lab) ran Q&A sessions directly on the wrai.th codebase -- identifying what they needed to work better as a team. Conversations, conflict-aware memory, goal cascades, team permissions, vault auto-injection -- all requested by agents who hit friction and asked for features themselves. The relay is shaped by its own users.
+Most of the 76 MCP tools weren't designed by a human. Multiple teams of agents at [synergix-lab](https://github.com/synergix-lab) ran Q&A sessions directly on the wrai.th codebase -- identifying what they needed to work better as a team. Conversations, conflict-aware memory, goal cascades, team permissions, vault auto-injection -- all requested by agents who hit friction and asked for features themselves. The relay is shaped by its own users.
 
 <table>
 <tr>
@@ -665,7 +665,7 @@ That's the only contract.
 
 ## &#x1F6E0; MCP Tools
 
-67 tools. No SDK, no wrapper. Agents call them directly through the MCP connection.
+76 tools. No SDK, no wrapper. Agents call them directly through the MCP connection.
 
 <details>
 <summary><strong>Identity & Session</strong> --7 tools</summary>
@@ -813,7 +813,7 @@ flowchart LR
     B(Browser) -->|SSE + REST| R
 
     subgraph R[wrai.th]
-        H[handlers.go<br>67 MCP tools]
+        H[handlers.go<br>76 MCP tools]
         DB[(SQLite FTS5)]
         UI[Canvas 2D UI]
         H <--> DB

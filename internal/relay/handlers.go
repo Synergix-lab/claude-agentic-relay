@@ -1814,6 +1814,12 @@ func (h *Handlers) HandleClaimFiles(ctx context.Context, req mcp.CallToolRequest
 	filePaths := req.GetString("file_paths", "[]")
 	ttlSeconds := req.GetInt("ttl_seconds", 1800)
 
+	// Surface existing claims on the same files (advisory: no hard refusal,
+	// but the caller learns who else is editing so they can coordinate).
+	var requested []string
+	_ = json.Unmarshal([]byte(filePaths), &requested)
+	existing := h.findExistingClaims(project, agent, requested)
+
 	lock, err := h.db.ClaimFiles(project, agent, filePaths, ttlSeconds)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to claim files: %v", err)), nil
@@ -1824,7 +1830,50 @@ func (h *Handlers) HandleClaimFiles(ctx context.Context, req mcp.CallToolRequest
 	content := fmt.Sprintf("%s is now editing: %s", agent, filePaths)
 	_, _ = h.db.InsertMessage(project, agent, "*", "notification", subject, content, fmt.Sprintf(`{"tags":["file-lock"],"file_paths":%s}`, filePaths), "P1", 0, nil, nil)
 
-	return h.resultJSONTracked(project, agent, "claim_files", lock)
+	payload := map[string]any{"lock": lock}
+	if len(existing) > 0 {
+		payload["existing_claims"] = existing
+		payload["conflict"] = true
+	}
+	return h.resultJSONTracked(project, agent, "claim_files", payload)
+}
+
+// findExistingClaims returns claims held by other agents that overlap with the
+// requested paths. Used to decorate claim_files responses with a conflict hint.
+func (h *Handlers) findExistingClaims(project, selfAgent string, requested []string) []map[string]any {
+	if len(requested) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(requested))
+	for _, p := range requested {
+		want[p] = true
+	}
+	locks, err := h.db.ListFileLocks(project)
+	if err != nil {
+		return nil
+	}
+	var out []map[string]any
+	for _, l := range locks {
+		if l.AgentName == selfAgent {
+			continue
+		}
+		var paths []string
+		_ = json.Unmarshal([]byte(l.FilePaths), &paths)
+		var overlap []string
+		for _, p := range paths {
+			if want[p] {
+				overlap = append(overlap, p)
+			}
+		}
+		if len(overlap) > 0 {
+			out = append(out, map[string]any{
+				"agent":       l.AgentName,
+				"overlapping": overlap,
+				"claimed_at":  l.ClaimedAt,
+			})
+		}
+	}
+	return out
 }
 
 func (h *Handlers) HandleReleaseFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

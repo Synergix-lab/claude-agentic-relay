@@ -297,20 +297,36 @@ func (d *DB) GetGoalCascade(project string) ([]models.GoalWithProgress, error) {
 
 	// Collect roots — must re-read from byID after children are set
 	// But children of children won't be correct because we copied...
-	// Use a recursive collect instead:
+	// Use a recursive collect instead. Rollup: a goal's total/done counts
+	// include its own direct tasks PLUS the aggregated counts of all
+	// descendants. This matches the "goal cascade with progress rollup"
+	// promise in the README — previously each level only showed its direct
+	// tasks, so a project_goal with child agent_goals full of work read as
+	// 0/0 and looked empty.
 	var collect func(id string) models.GoalWithProgress
 	collect = func(id string) models.GoalWithProgress {
 		gwp := byID[id]
 		result := *gwp
 		result.Children = nil
-		// Find children in original goal list order
+		totalAgg := result.TotalTasks
+		doneAgg := result.DoneTasks
 		for _, g := range goals {
 			if g.ParentGoalID != nil && *g.ParentGoalID == id {
-				result.Children = append(result.Children, collect(g.ID))
+				child := collect(g.ID)
+				totalAgg += child.TotalTasks
+				doneAgg += child.DoneTasks
+				result.Children = append(result.Children, child)
 			}
 		}
 		if result.Children == nil {
 			result.Children = []models.GoalWithProgress{}
+		}
+		result.TotalTasks = totalAgg
+		result.DoneTasks = doneAgg
+		if totalAgg > 0 {
+			result.Progress = float64(doneAgg) / float64(totalAgg)
+		} else {
+			result.Progress = 0
 		}
 		return result
 	}

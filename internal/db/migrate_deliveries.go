@@ -107,7 +107,19 @@ func deliveryStateFromReads(tx *sql.Tx, msgID, agentName string) string {
 	if exists > 0 {
 		return "acknowledged"
 	}
-	return "surfaced" // assume already seen since it's historical
+	// Recent unread messages (< 24h) are still fresh — backfill as 'queued' so
+	// the agent sees them on next poll. Older ones default to 'surfaced' to
+	// avoid flooding the inbox with ancient history after an upgrade.
+	var createdAt string
+	_ = tx.QueryRow("SELECT created_at FROM messages WHERE id = ?", msgID).Scan(&createdAt)
+	if createdAt != "" {
+		if ts, err := time.Parse("2006-01-02T15:04:05.000000Z", createdAt); err == nil {
+			if time.Since(ts) < 24*time.Hour {
+				return "queued"
+			}
+		}
+	}
+	return "surfaced"
 }
 
 func insertDelivery(tx *sql.Tx, msgID, toAgent, state, now, project string) {

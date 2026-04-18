@@ -1107,7 +1107,9 @@ func (r *Relay) apiGetLatestTasks(w http.ResponseWriter, req *http.Request) {
 	project := req.URL.Query().Get("project")
 	since := req.URL.Query().Get("since")
 	if since == "" {
-		since = time.Now().UTC().Add(-30 * time.Second).Format("2006-01-02T15:04:05.000000Z")
+		// Default window is 1h — 30s was too narrow for human polling cycles,
+		// so the endpoint appeared empty even when tasks existed.
+		since = time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02T15:04:05.000000Z")
 	}
 
 	tasks, err := r.DB.GetTasksSince(project, since, 100)

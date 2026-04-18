@@ -7,7 +7,7 @@ import (
 )
 
 func runStats(args []string) {
-	project, _ := parseProject(args)
+	project, explicit, _ := parseProjectExplicit(args)
 
 	d := openDB()
 	defer func() { _ = d.Close() }()
@@ -18,8 +18,10 @@ func runStats(args []string) {
 		os.Exit(1)
 	}
 
-	if project != "default" {
+	if explicit {
 		fmt.Printf("project: %s\n", project)
+	} else {
+		fmt.Printf("project: %s (default — use -p <name> to scope)\n", project)
 	}
 
 	// Uptime from oldest agent registration.

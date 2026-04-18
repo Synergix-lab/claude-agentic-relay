@@ -40,17 +40,37 @@ func (r *Relay) apiGetWorkflow(w http.ResponseWriter, path string) {
 
 // POST /api/workflows
 func (r *Relay) apiCreateWorkflow(w http.ResponseWriter, req *http.Request) {
-	var body struct {
+	// Decode into a raw map first so we can warn on unknown fields (e.g. the
+	// common mistake of sending trigger_type/definition from a stale docs draft).
+	var raw map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&raw); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON", err)
+		return
+	}
+	var unknown []string
+	for k := range raw {
+		switch k {
+		case "project", "name", "description", "nodes", "edges":
+			// known fields, ignore
+		default:
+			unknown = append(unknown, k)
+		}
+	}
+
+	body := struct {
 		Project     string `json:"project"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Nodes       string `json:"nodes"`
 		Edges       string `json:"edges"`
+	}{
+		Project:     asString(raw["project"]),
+		Name:        asString(raw["name"]),
+		Description: asString(raw["description"]),
+		Nodes:       asString(raw["nodes"]),
+		Edges:       asString(raw["edges"]),
 	}
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		apiError(w, http.StatusBadRequest, "invalid JSON", err)
-		return
-	}
+
 	if body.Project == "" {
 		body.Project = "default"
 	}
@@ -70,9 +90,28 @@ func (r *Relay) apiCreateWorkflow(w http.ResponseWriter, req *http.Request) {
 		apiError(w, http.StatusInternalServerError, "create workflow failed", err)
 		return
 	}
+
+	// Attach a warning header so curl callers see unknown-field hints without
+	// breaking the JSON contract for UI clients.
+	if len(unknown) > 0 {
+		w.Header().Set("Warning", "299 - \"unknown fields ignored: "+strings.Join(unknown, ", ")+"\"")
+	}
+
 	b, _ := json.Marshal(wf)
 	w.WriteHeader(http.StatusCreated)
 	w.Write(b)
+}
+
+// asString tolerantly coerces any value to a string (empty on nil/type mismatch).
+// Used when decoding workflow payloads where clients may send number/string.
+func asString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }
 
 // PUT /api/workflows/:id
