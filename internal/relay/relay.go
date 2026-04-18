@@ -134,6 +134,7 @@ func New(database *db.DB, ingester *ingest.Ingester, vaultWatcher *vault.Watcher
 		server.ServerTool{Tool: startTaskTool(), Handler: handlers.HandleStartTask},
 		server.ServerTool{Tool: completeTaskTool(), Handler: handlers.HandleCompleteTask},
 		server.ServerTool{Tool: blockTaskTool(), Handler: handlers.HandleBlockTask},
+		server.ServerTool{Tool: resumeTaskTool(), Handler: handlers.HandleResumeTask},
 		server.ServerTool{Tool: cancelTaskTool(), Handler: handlers.HandleCancelTask},
 		server.ServerTool{Tool: getTaskTool(), Handler: handlers.HandleGetTask},
 		server.ServerTool{Tool: listTasksTool(), Handler: handlers.HandleListTasks},

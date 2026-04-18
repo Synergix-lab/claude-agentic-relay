@@ -1349,6 +1349,43 @@ func (h *Handlers) HandleStartTask(ctx context.Context, req mcp.CallToolRequest)
 	return h.resultJSONTracked(project, agent, "start_task", task)
 }
 
+// HandleResumeTask transitions a blocked task back to in-progress.
+// Thin wrapper over StartTask (the DB allows the blocked→in-progress transition
+// already) — kept as a distinct MCP tool so agents discovering tools don't have
+// to guess that start_task resumes too.
+func (h *Handlers) HandleResumeTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project := resolveProject(ctx, req)
+	agent := resolveAgent(ctx, req)
+	taskID := req.GetString("task_id", "")
+	if taskID == "" {
+		return mcp.NewToolResultError("task_id is required"), nil
+	}
+	taskID, err := h.resolveTaskID(taskID, project)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	existing, err := h.db.GetTask(taskID, project)
+	if err != nil || existing == nil {
+		return mcp.NewToolResultError("task not found"), nil
+	}
+	if existing.Status != "blocked" {
+		return mcp.NewToolResultError(fmt.Sprintf("task is not blocked (status=%s)", existing.Status)), nil
+	}
+
+	task, err := h.db.StartTask(taskID, agent, project)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to resume task: %v", err)), nil
+	}
+	h.events.Emit(MCPEvent{Type: "task", Action: "resume", Agent: agent, Project: project, Label: task.Title})
+
+	go h.fireTriggers(project, "task.resumed", map[string]string{
+		"task_id": task.ID, "profile": task.ProfileSlug, "resumed_by": agent, "title": task.Title,
+	})
+
+	return h.resultJSONTracked(project, agent, "resume_task", task)
+}
+
 func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(ctx, req)
 	agent := resolveAgent(ctx, req)

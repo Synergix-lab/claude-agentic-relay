@@ -20,8 +20,13 @@ func (d *DB) UpdateSpawnChild(id, status string, exitCode int, errMsg string) {
 // ListSpawnChildren returns children for a parent agent, optionally filtered by status.
 func (d *DB) ListSpawnChildren(parentAgent, project, status string) []map[string]any {
 	query := `SELECT id, parent_agent, project, profile, status, started_at, finished_at, exit_code, error
-		FROM spawn_children WHERE parent_agent = ? AND project = ?`
-	args := []any{parentAgent, project}
+		FROM spawn_children WHERE project = ?`
+	args := []any{project}
+
+	if parentAgent != "" {
+		query += " AND parent_agent = ?"
+		args = append(args, parentAgent)
+	}
 
 	if status != "" && status != "all" {
 		query += " AND status = ?"

@@ -252,7 +252,7 @@ func (d *DB) SearchMemory(project, agentName, query string, tags []string, scope
 			 ORDER BY rank
 			 LIMIT ?`, where,
 		)
-		args = append(args, query, limit)
+		args = append(args, escapeFTSQuery(query), limit)
 	} else {
 		sql = fmt.Sprintf(
 			`SELECT m.id, m.key, m.value, m.tags, m.scope, m.project, m.agent_name, m.confidence, m.version,
@@ -527,8 +527,28 @@ func (d *DB) SearchAllMemories(query string, limit int) ([]models.Memory, error)
 		 WHERE m.archived_at IS NULL AND memories_fts MATCH ?
 		 ORDER BY rank
 		 LIMIT ?`,
-		query, limit,
+		escapeFTSQuery(query), limit,
 	)
+}
+
+// escapeFTSQuery wraps each token in double quotes so FTS5 does not interpret
+// punctuation (especially hyphens) as column filters or operators. Empty tokens
+// are skipped. A bare token stays a bare token, but `state-machine` becomes
+// `"state-machine"` and is treated as a literal string to search.
+func escapeFTSQuery(q string) string {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return q
+	}
+	// Fields() splits on any whitespace
+	tokens := strings.Fields(q)
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		// Escape embedded double-quotes by doubling them (FTS5 convention)
+		t = strings.ReplaceAll(t, `"`, `""`)
+		out = append(out, `"`+t+`"`)
+	}
+	return strings.Join(out, " ")
 }
 
 // DeleteMemoryByID soft-deletes a specific memory by ID (for web UI).

@@ -115,7 +115,7 @@ func (d *DB) SearchVault(project, query string, tags []string, limit int) ([]mod
 		WHERE vault_docs_fts MATCH ?
 		AND vd.project IN (?, '_relay')`
 
-	args := []any{query, project}
+	args := []any{escapeFTSQuery(query), project}
 
 	if len(tags) > 0 {
 		for _, tag := range tags {

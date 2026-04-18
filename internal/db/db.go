@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -251,6 +252,12 @@ func migrate(conn *sql.DB) error {
 
 	// Backfill projects from existing agents
 	backfillProjects(conn)
+
+	// Ensure the 'default' project row always exists — CLI and MCP tools accept
+	// project="default" implicitly but never created the row, so the UI hid
+	// activity that happened in the implicit default scope.
+	nowStr := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_, _ = conn.Exec("INSERT OR IGNORE INTO projects (name, planet_type, created_at) VALUES ('default', 'forest/1', ?)", nowStr)
 
 	ensureColumns(conn, "messages", map[string]string{
 		"conversation_id": "TEXT",

@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"agent-relay/internal/spawn"
 
@@ -139,14 +140,21 @@ func (h *Handlers) HandleSchedule(ctx context.Context, req mcp.CallToolRequest) 
 	cycle := req.GetString("cycle", "")
 	allowedTools := req.GetString("allowed_tools", "")
 
+	var missing []string
 	if agent == "" {
-		return mcp.NewToolResultError("agent identity required"), nil
+		missing = append(missing, "as (caller agent identity)")
 	}
 	if name == "" {
-		return mcp.NewToolResultError("name is required"), nil
+		missing = append(missing, "name")
 	}
 	if cronExpr == "" {
-		return mcp.NewToolResultError("cron_expr is required"), nil
+		missing = append(missing, "cron_expr")
+	}
+	if cycle == "" && prompt == "" {
+		missing = append(missing, "cycle or prompt")
+	}
+	if len(missing) > 0 {
+		return mcp.NewToolResultError("missing required fields: " + strings.Join(missing, ", ")), nil
 	}
 
 	if h.spawnMgr == nil {

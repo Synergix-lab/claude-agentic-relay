@@ -74,8 +74,10 @@ func (h *Handlers) fireTriggers(project, event string, meta map[string]string) {
 		if t.LastFiredAt != "" {
 			if lastFired, err := time.Parse("2006-01-02T15:04:05Z", t.LastFiredAt); err == nil {
 				cooldown := time.Duration(t.CooldownSeconds) * time.Second
-				if time.Since(lastFired) < cooldown {
-					log.Printf("[dispatcher] trigger %s skipped (cooldown %ds)", t.ID, t.CooldownSeconds)
+				if remaining := cooldown - time.Since(lastFired); remaining > 0 {
+					msg := fmt.Sprintf("cooldown (%s remaining)", remaining.Truncate(time.Second))
+					log.Printf("[dispatcher] trigger %s skipped — %s", t.ID, msg)
+					h.db.RecordTriggerFire(t.ID, project, event, "", fmt.Errorf("%s", msg))
 					continue
 				}
 			}

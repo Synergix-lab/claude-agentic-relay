@@ -21,7 +21,7 @@ func whoamiTool() mcp.Tool {
 func registerAgentTool() mcp.Tool {
 	return mcp.NewTool(
 		"register_agent",
-		mcp.WithDescription("Register an agent with the relay. Call this once per agent at startup to announce their presence. Returns session_context with profile, tasks, unread messages, and conversations.\n\nIf is_executive=true, an 'admin' team ('leadership') is auto-created and the agent is added to it, enabling broadcast messages (send_message to='*')."),
+		mcp.WithDescription("Register an agent with the relay. Call this once per agent at startup to announce their presence. Returns session_context with profile, tasks, unread messages, and conversations.\n\nIf is_executive=true, an 'admin' team ('leadership') is auto-created and the agent is added to it. Executives are shown with a crown on the canvas and appear at the top of org listings.\n\nNote: broadcast messages (send_message to='*') are currently allowed for any agent in the project. Team-based routing (send_message to='team:slug') enforces membership."),
 		projectParam,
 		mcp.WithString("name", mcp.Description("Unique agent name (e.g. 'lead', 'backend', 'frontend'). Re-registering the same name updates the agent. To rename, register the new name and call deactivate_agent on the old one."), mcp.Required()),
 		mcp.WithString("role", mcp.Description("Agent role description (e.g. 'FastAPI backend developer')")),
@@ -390,6 +390,16 @@ func blockTaskTool() mcp.Tool {
 		projectParam,
 		mcp.WithString("task_id", mcp.Description("Task ID to block"), mcp.Required()),
 		mcp.WithString("reason", mcp.Description("Why the task is blocked")),
+	)
+}
+
+func resumeTaskTool() mcp.Tool {
+	return mcp.NewTool(
+		"resume_task",
+		mcp.WithDescription("Move a blocked task back to in-progress. The task must currently be in the blocked state. Fires the task.resumed event."),
+		asParam,
+		projectParam,
+		mcp.WithString("task_id", mcp.Description("Task ID to resume"), mcp.Required()),
 	)
 }
 

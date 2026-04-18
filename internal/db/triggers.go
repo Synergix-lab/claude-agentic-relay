@@ -32,7 +32,8 @@ type TriggerFire struct {
 }
 
 // UpsertTrigger creates or updates a trigger.
-func (d *DB) UpsertTrigger(project, event, matchRules, profileSlug, cycle, maxDuration string) (*Trigger, error) {
+// cooldownSeconds: nil uses the default (60s); *0 means no cooldown.
+func (d *DB) UpsertTrigger(project, event, matchRules, profileSlug, cycle, maxDuration string, cooldownSeconds *int) (*Trigger, error) {
 	now := time.Now().UTC().Format(memoryTimeFmt)
 	id := uuid.New().String()
 	if maxDuration == "" {
@@ -41,11 +42,18 @@ func (d *DB) UpsertTrigger(project, event, matchRules, profileSlug, cycle, maxDu
 	if matchRules == "" {
 		matchRules = "{}"
 	}
+	cooldown := 60
+	if cooldownSeconds != nil {
+		cooldown = *cooldownSeconds
+		if cooldown < 0 {
+			cooldown = 0
+		}
+	}
 
 	_, err := d.conn.Exec(`
-		INSERT INTO triggers (id, project, event, match_rules, profile_slug, cycle, max_duration, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, project, event, matchRules, profileSlug, cycle, maxDuration, now, now)
+		INSERT INTO triggers (id, project, event, match_rules, profile_slug, cycle, max_duration, cooldown_seconds, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, project, event, matchRules, profileSlug, cycle, maxDuration, cooldown, now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +67,7 @@ func (d *DB) UpsertTrigger(project, event, matchRules, profileSlug, cycle, maxDu
 		Cycle:           cycle,
 		MaxDuration:     maxDuration,
 		Enabled:         true,
-		CooldownSeconds: 60,
+		CooldownSeconds: cooldown,
 	}, nil
 }
 

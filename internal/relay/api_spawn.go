@@ -309,12 +309,13 @@ func (r *Relay) apiGetTriggers(w http.ResponseWriter, req *http.Request) {
 
 func (r *Relay) apiCreateTrigger(w http.ResponseWriter, req *http.Request) {
 	var body struct {
-		Project     string `json:"project"`
-		Event       string `json:"event"`
-		MatchRules  string `json:"match_rules"`
-		ProfileSlug string `json:"profile_slug"`
-		Cycle       string `json:"cycle"`
-		MaxDuration string `json:"max_duration"`
+		Project         string `json:"project"`
+		Event           string `json:"event"`
+		MatchRules      string `json:"match_rules"`
+		ProfileSlug     string `json:"profile_slug"`
+		Cycle           string `json:"cycle"`
+		MaxDuration     string `json:"max_duration"`
+		CooldownSeconds *int   `json:"cooldown_seconds"` // nil = default 60s, *0 = disabled
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON", err)
@@ -328,7 +329,7 @@ func (r *Relay) apiCreateTrigger(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	trigger, err := r.DB.UpsertTrigger(body.Project, body.Event, body.MatchRules, body.ProfileSlug, body.Cycle, body.MaxDuration)
+	trigger, err := r.DB.UpsertTrigger(body.Project, body.Event, body.MatchRules, body.ProfileSlug, body.Cycle, body.MaxDuration, body.CooldownSeconds)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "create trigger failed", err)
 		return
@@ -450,7 +451,7 @@ func (r *Relay) apiCreateSignalHandler(w http.ResponseWriter, req *http.Request)
 	}
 
 	event := "signal:" + body.Signal
-	trigger, err := r.DB.UpsertTrigger(body.Project, event, body.MatchRules, body.ProfileSlug, body.Cycle, body.MaxDuration)
+	trigger, err := r.DB.UpsertTrigger(body.Project, event, body.MatchRules, body.ProfileSlug, body.Cycle, body.MaxDuration, nil)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "create signal handler failed", err)
 		return
