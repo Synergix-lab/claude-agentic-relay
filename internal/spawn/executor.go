@@ -164,6 +164,11 @@ func (e *Executor) buildArgs(params SpawnParams) []string {
 		args = append(args, "--output-format", "stream-json", "--verbose")
 	}
 	args = append(args, "--allowedTools", allowedTools)
+	// Spawned children run headless — nobody is around to click 'allow' on
+	// file-write prompts. bypassPermissions skips path-level sandbox checks
+	// so Write/Edit/Bash targets in the prompt actually execute. The
+	// allowedTools list above is still the coarse gate.
+	args = append(args, "--permission-mode", "bypassPermissions")
 
 	mcpConfig := buildMCPConfig(params.MCPServers)
 	if mcpConfig != "" {
