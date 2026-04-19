@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiStreamActivity(w, req)
 	case path == "/events/stream" && req.Method == http.MethodGet:
 		r.apiStreamEvents(w, req)
+	case path == "/events/recent" && req.Method == http.MethodGet:
+		r.apiGetRecentEvents(w, req)
 	// File locks
 	case path == "/file-locks" && req.Method == http.MethodGet:
 		r.apiGetFileLocks(w, req)
@@ -908,6 +911,32 @@ func (r *Relay) apiGetActivity(w http.ResponseWriter) {
 		sessions = make([]ingest.SessionState, 0)
 	}
 	writeJSON(w, sessions)
+}
+
+// apiGetRecentEvents returns recent MCP events from the in-memory ring buffer.
+// Complements /api/activity (which tracks Claude Code session states) with an
+// event log of MCP actions (send_message, dispatch_task, etc.) regardless of
+// whether the caller went through a Claude Code session.
+//
+// Query params:
+//   - project: filter by project (optional)
+//   - limit: max entries (default 100, max 500)
+func (r *Relay) apiGetRecentEvents(w http.ResponseWriter, req *http.Request) {
+	project := req.URL.Query().Get("project")
+	limit := 100
+	if v := req.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	events := r.Events.Recent(project, limit)
+	if events == nil {
+		events = []MCPEvent{}
+	}
+	writeJSON(w, events)
 }
 
 type ssePayload struct {

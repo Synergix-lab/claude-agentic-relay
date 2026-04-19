@@ -352,6 +352,19 @@ func (h *Handlers) HandleSendMessage(ctx context.Context, req mcp.CallToolReques
 		}
 	}
 
+	// Emit visual event for activity feed / SSE subscribers. Action distinguishes
+	// broadcast / team / conversation / direct so the UI can render icons.
+	action := "send"
+	switch {
+	case to == "*":
+		action = "broadcast"
+	case strings.HasPrefix(to, "team:"):
+		action = "team"
+	case conversationID != nil:
+		action = "conversation"
+	}
+	h.events.Emit(MCPEvent{Type: "message", Action: action, Agent: from, Project: project, Target: to, Label: subject})
+
 	return h.resultJSONTracked(project, from, "send_message", msg)
 }
 
@@ -454,7 +467,17 @@ func (h *Handlers) HandleGetInbox(ctx context.Context, req mcp.CallToolRequest) 
 func (h *Handlers) HandleAckDelivery(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	deliveryID := req.GetString("delivery_id", "")
 	if deliveryID == "" {
-		return mcp.NewToolResultError("delivery_id is required"), nil
+		// Common mistake: callers pass message_id. Offer a fallback if the
+		// caller also passed as+project so we can resolve message_id → delivery_id.
+		if msgID := req.GetString("message_id", ""); msgID != "" {
+			agent := resolveAgent(ctx, req)
+			project := resolveProject(ctx, req)
+			if err := h.db.AcknowledgeDeliveryByMessage(msgID, agent, project); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to acknowledge delivery by message: %v", err)), nil
+			}
+			return h.resultJSONTracked(project, agent, "ack_delivery", map[string]any{"acknowledged_message_id": msgID})
+		}
+		return mcp.NewToolResultError("delivery_id is required (get it from get_inbox response — each message has a delivery_id field). If you only have the message_id, pass message_id + as + project instead."), nil
 	}
 	if err := h.db.AcknowledgeDelivery(deliveryID); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to acknowledge delivery: %v", err)), nil
@@ -544,8 +567,14 @@ func (h *Handlers) HandleMarkRead(ctx context.Context, req mcp.CallToolRequest) 
 	}
 
 	ids := req.GetStringSlice("message_ids", nil)
+	// Common mistake: singular message_id. Accept it as a one-element array.
 	if len(ids) == 0 {
-		return mcp.NewToolResultError("message_ids or conversation_id is required"), nil
+		if single := req.GetString("message_id", ""); single != "" {
+			ids = []string{single}
+		}
+	}
+	if len(ids) == 0 {
+		return mcp.NewToolResultError("message_ids (array) or conversation_id is required. Note: the field is plural — pass message_ids:['id1','id2'] not message_id."), nil
 	}
 
 	count, err := h.db.MarkRead(ids, agent, project)
@@ -1641,17 +1670,33 @@ func (h *Handlers) HandleMoveTask(ctx context.Context, req mcp.CallToolRequest) 
 func (h *Handlers) HandleBatchCompleteTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	project := resolveProject(ctx, req)
 	agent := resolveAgent(ctx, req)
-	tasksJSON := req.GetString("tasks", "[]")
+	tasksJSON := req.GetString("tasks", "")
 
 	var items []struct {
 		TaskID string  `json:"task_id"`
 		Result *string `json:"result"`
 	}
-	if err := json.Unmarshal([]byte(tasksJSON), &items); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
+	// Accept the common mistake task_ids:["..."] as a shorthand for
+	// tasks:[{task_id:"..."}] (no result).
+	if tasksJSON == "" {
+		if idsJSON := req.GetString("task_ids", ""); idsJSON != "" {
+			var ids []string
+			if err := json.Unmarshal([]byte(idsJSON), &ids); err == nil {
+				for _, id := range ids {
+					items = append(items, struct {
+						TaskID string  `json:"task_id"`
+						Result *string `json:"result"`
+					}{TaskID: id})
+				}
+			}
+		}
+	} else {
+		if err := json.Unmarshal([]byte(tasksJSON), &items); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
+		}
 	}
 	if len(items) == 0 {
-		return mcp.NewToolResultError("tasks array is empty"), nil
+		return mcp.NewToolResultError("tasks is required — pass tasks:'[{\"task_id\":\"...\",\"result\":\"...\"}]' (JSON string). As a shortcut, task_ids:'[\"id1\",\"id2\"]' is also accepted."), nil
 	}
 
 	var completed []string
@@ -1695,7 +1740,7 @@ func (h *Handlers) HandleBatchDispatchTasks(ctx context.Context, req mcp.CallToo
 		return mcp.NewToolResultError(fmt.Sprintf("invalid tasks JSON: %v", err)), nil
 	}
 	if len(items) == 0 {
-		return mcp.NewToolResultError("tasks array is empty"), nil
+		return mcp.NewToolResultError("tasks is required — pass tasks:'[{\"profile\":\"...\",\"title\":\"...\",\"priority\":\"P2\",\"board_id\":\"...\",\"goal_id\":\"...\"}]' (JSON string). Only profile and title are required per item."), nil
 	}
 
 	var dispatched []map[string]string
