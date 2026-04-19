@@ -110,7 +110,10 @@ func (h *Handlers) HandleKillChild(ctx context.Context, req mcp.CallToolRequest)
 
 // HandleListChildren lists spawned child agents.
 func (h *Handlers) HandleListChildren(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	agent := resolveAgent(ctx, req)
+	// Parent agent filter is optional. Only apply if the caller explicitly
+	// passed `as` — the resolveAgent fallback to "anonymous" would otherwise
+	// filter out every real child (none are parented to "anonymous").
+	agent := req.GetString("as", "")
 	project := resolveProject(ctx, req)
 	status := req.GetString("status", "all")
 
