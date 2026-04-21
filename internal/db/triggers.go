@@ -127,6 +127,66 @@ func (d *DB) DeleteTrigger(id string) {
 	_, _ = d.conn.Exec("DELETE FROM triggers WHERE id = ?", id)
 }
 
+// GetTrigger returns a single trigger by ID, or nil if not found.
+func (d *DB) GetTrigger(id string) *Trigger {
+	var t Trigger
+	var enabled int
+	err := d.ro().QueryRow(`SELECT id, project, event, match_rules, profile_slug, cycle, max_duration, enabled,
+		COALESCE(cooldown_seconds, 60), COALESCE(last_fired_at, '')
+		FROM triggers WHERE id = ?`, id).Scan(
+		&t.ID, &t.Project, &t.Event, &t.MatchRules, &t.ProfileSlug, &t.Cycle, &t.MaxDuration, &enabled,
+		&t.CooldownSeconds, &t.LastFiredAt,
+	)
+	if err != nil {
+		return nil
+	}
+	t.Enabled = enabled == 1
+	return &t
+}
+
+// UpdateTriggerFields applies a partial update. Any non-nil field overwrites the
+// existing value. Used by PUT /api/triggers/{id}.
+func (d *DB) UpdateTriggerFields(id string, matchRules, profileSlug, cycle, maxDuration *string, enabled *bool, cooldownSeconds *int) (*Trigger, error) {
+	existing := d.GetTrigger(id)
+	if existing == nil {
+		return nil, nil
+	}
+	if matchRules != nil {
+		existing.MatchRules = *matchRules
+	}
+	if profileSlug != nil {
+		existing.ProfileSlug = *profileSlug
+	}
+	if cycle != nil {
+		existing.Cycle = *cycle
+	}
+	if maxDuration != nil {
+		existing.MaxDuration = *maxDuration
+	}
+	if enabled != nil {
+		existing.Enabled = *enabled
+	}
+	if cooldownSeconds != nil {
+		existing.CooldownSeconds = *cooldownSeconds
+		if existing.CooldownSeconds < 0 {
+			existing.CooldownSeconds = 0
+		}
+	}
+	now := time.Now().UTC().Format(memoryTimeFmt)
+	enabledInt := 0
+	if existing.Enabled {
+		enabledInt = 1
+	}
+	_, err := d.conn.Exec(
+		`UPDATE triggers SET match_rules = ?, profile_slug = ?, cycle = ?, max_duration = ?, enabled = ?, cooldown_seconds = ?, updated_at = ? WHERE id = ?`,
+		existing.MatchRules, existing.ProfileSlug, existing.Cycle, existing.MaxDuration, enabledInt, existing.CooldownSeconds, now, id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
 // ToggleTrigger enables or disables a trigger.
 func (d *DB) ToggleTrigger(id string, enabled bool) {
 	now := time.Now().UTC().Format(memoryTimeFmt)

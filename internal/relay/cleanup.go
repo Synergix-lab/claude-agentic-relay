@@ -58,10 +58,15 @@ func StartCleanup(database *db.DB, done <-chan struct{}) {
 				} else if expired > 0 {
 					log.Printf("expired %d elevation(s)", expired)
 				}
-				if purged, err := database.PurgeOldTokenUsage(90 * 24 * time.Hour); err != nil {
+				if purged, err := database.PurgeOldTokenUsage(30 * 24 * time.Hour); err != nil {
 					log.Printf("purge token usage error: %v", err)
 				} else if purged > 0 {
 					log.Printf("purged %d old token usage record(s)", purged)
+				}
+				if purged, err := database.PurgeCycleHistory(30 * 24 * time.Hour); err != nil {
+					log.Printf("purge cycle history error: %v", err)
+				} else if purged > 0 {
+					log.Printf("purged %d old cycle history record(s)", purged)
 				}
 				database.Optimize()
 			}

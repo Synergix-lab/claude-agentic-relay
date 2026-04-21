@@ -64,6 +64,7 @@ func (d *DB) ListConversations(project, agentName string) ([]models.Conversation
 		JOIN conversation_members cm ON cm.conversation_id = c.id
 		WHERE cm.agent_name = ? AND cm.left_at IS NULL AND c.archived_at IS NULL AND c.project = ?
 		ORDER BY c.created_at DESC
+		LIMIT 30
 	`
 
 	rows, err := d.ro().Query(query, agentName, agentName, agentName, project)

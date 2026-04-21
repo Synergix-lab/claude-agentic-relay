@@ -104,6 +104,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiDispatchTask(w, req)
 	case strings.HasPrefix(path, "/tasks/") && strings.HasSuffix(path, "/transition") && req.Method == http.MethodPost:
 		r.apiTransitionTask(w, req, path)
+	case strings.HasPrefix(path, "/tasks/") && strings.HasSuffix(path, "/progress") && req.Method == http.MethodGet:
+		r.apiGetTaskProgress(w, req, path)
 	case strings.HasPrefix(path, "/tasks/") && req.Method == http.MethodPut:
 		r.apiUpdateTask(w, req, path)
 	case strings.HasPrefix(path, "/tasks/") && req.Method == http.MethodDelete:
@@ -210,6 +212,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGetTriggers(w, req)
 	case path == "/triggers" && req.Method == http.MethodPost:
 		r.apiCreateTrigger(w, req)
+	case strings.HasPrefix(path, "/triggers/") && req.Method == http.MethodPut:
+		r.apiUpdateTrigger(w, req, path)
 	case strings.HasPrefix(path, "/triggers/") && req.Method == http.MethodDelete:
 		r.apiDeleteTrigger(w, path)
 	// Agent OS spawn (profile + cycle)
@@ -1170,6 +1174,25 @@ func (r *Relay) apiGetTask(w http.ResponseWriter, req *http.Request, path string
 		return
 	}
 	writeJSON(w, task)
+}
+
+func (r *Relay) apiGetTaskProgress(w http.ResponseWriter, req *http.Request, path string) {
+	project := projectFromRequest(req)
+	trimmed := strings.TrimPrefix(path, "/tasks/")
+	taskID, _, _ := strings.Cut(trimmed, "/")
+	if taskID == "" {
+		http.Error(w, `{"error":"missing task id"}`, http.StatusBadRequest)
+		return
+	}
+	notes, err := r.DB.GetProgressNotes(taskID, project)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get progress notes"}`, http.StatusInternalServerError)
+		return
+	}
+	if notes == nil {
+		notes = []db.ProgressNote{}
+	}
+	writeJSON(w, notes)
 }
 
 func (r *Relay) apiDispatchTask(w http.ResponseWriter, req *http.Request) {

@@ -11,10 +11,26 @@ func (d *DB) InsertSpawnChild(id, parentAgent, project, profile, prompt string) 
 		id, parentAgent, project, profile, prompt, time.Now().UTC().Format(time.RFC3339))
 }
 
-// UpdateSpawnChild updates a child's status after completion.
-func (d *DB) UpdateSpawnChild(id, status string, exitCode int, errMsg string) {
-	_, _ = d.conn.Exec(`UPDATE spawn_children SET status = ?, exit_code = ?, error = ?, finished_at = ? WHERE id = ?`,
-		status, exitCode, errMsg, time.Now().UTC().Format(time.RFC3339), id)
+// UpdateSpawnChild updates a child's status after completion. Stdout and stderr
+// tails are truncated to tailMaxStdout / tailMaxStderr bytes before persisting.
+func (d *DB) UpdateSpawnChild(id, status string, exitCode int, errMsg, stdoutTail, stderrTail string) {
+	_, _ = d.conn.Exec(
+		`UPDATE spawn_children SET status = ?, exit_code = ?, error = ?, finished_at = ?, stdout_tail = ?, stderr_tail = ? WHERE id = ?`,
+		status, exitCode, errMsg, time.Now().UTC().Format(time.RFC3339),
+		tailBytes(stdoutTail, tailMaxStdout), tailBytes(stderrTail, tailMaxStderr), id,
+	)
+}
+
+const (
+	tailMaxStdout = 2048
+	tailMaxStderr = 4096
+)
+
+func tailBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // ListSpawnChildren returns children for a parent agent, optionally filtered by status.

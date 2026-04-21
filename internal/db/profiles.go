@@ -87,14 +87,30 @@ func (d *DB) RegisterProfile(project, slug, name, role, contextPack, soulKeys, s
 		return nil, fmt.Errorf("query profile: %w", err)
 	}
 
-	// Update existing
-	existing.Name = name
-	existing.Role = role
-	existing.ContextPack = contextPack
-	existing.SoulKeys = soulKeys
-	existing.Skills = skills
-	existing.VaultPaths = vaultPaths
+	// Update existing — PATCH semantics. An empty/default parameter preserves
+	// the existing value instead of wiping it. Previously a caller passing
+	// only (slug, name, vault_paths) would nuke context_pack, role, exit_prompt,
+	// allowed_tools, and pool_size back to empty.
+	if name != "" {
+		existing.Name = name
+	}
+	if role != "" {
+		existing.Role = role
+	}
+	if contextPack != "" {
+		existing.ContextPack = contextPack
+	}
+	if soulKeys != "" && soulKeys != "[]" {
+		existing.SoulKeys = soulKeys
+	}
+	if skills != "" && skills != "[]" {
+		existing.Skills = skills
+	}
+	if vaultPaths != "" && vaultPaths != "[]" {
+		existing.VaultPaths = vaultPaths
+	}
 	existing.UpdatedAt = now
+	// opts (WithAllowedTools, WithPoolSize, WithExitPrompt) always win when present.
 	for _, opt := range opts {
 		opt(&existing)
 	}

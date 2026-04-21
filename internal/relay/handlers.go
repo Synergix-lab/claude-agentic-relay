@@ -1538,6 +1538,26 @@ func (h *Handlers) HandleCompleteTask(ctx context.Context, req mcp.CallToolReque
 		"task_id": task.ID, "profile": task.ProfileSlug, "completed_by": agent, "title": task.Title,
 	})
 
+	// Pool slot may have just freed — if any pending tasks exist for this
+	// profile, re-fire task.dispatched for the oldest one. Previously a full
+	// pool would strand pending tasks forever because the initial dispatch
+	// trigger fires once and no retry is scheduled on pool-free.
+	if task.ProfileSlug != "" {
+		go func(proj, profileSlug string) {
+			pending, _ := h.db.GetOldestPendingTaskForProfile(proj, profileSlug)
+			if pending == nil {
+				return
+			}
+			h.fireTriggers(proj, "task.dispatched", map[string]string{
+				"task_id":       pending.ID,
+				"profile":       pending.ProfileSlug,
+				"dispatched_by": pending.DispatchedBy,
+				"title":         pending.Title,
+				"requeued":      "true",
+			})
+		}(project, task.ProfileSlug)
+	}
+
 	// Notify dispatcher
 	h.registry.Notify(project, task.DispatchedBy, agent, fmt.Sprintf("Task done: %s", task.Title), task.ID)
 
@@ -1685,10 +1705,17 @@ func (h *Handlers) HandleUpdateTask(ctx context.Context, req mcp.CallToolRequest
 	priority := optionalString(req.GetString("priority", ""))
 	boardID := optionalString(req.GetString("board_id", ""))
 	goalID := optionalString(req.GetString("goal_id", ""))
+	progressNote := req.GetString("progress_note", "")
 
 	task, err := h.db.UpdateTaskFields(taskID, project, title, description, priority, boardID, goalID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to update task: %v", err)), nil
+	}
+
+	if progressNote != "" {
+		if err := h.db.AddProgressNote(taskID, project, agent, progressNote); err == nil {
+			h.events.Emit(MCPEvent{Type: "task", Action: "progress", Agent: agent, Project: project, Label: task.Title})
+		}
 	}
 
 	h.events.Emit(MCPEvent{Type: "task", Action: "update", Agent: agent, Project: project, Label: task.Title})
@@ -2596,7 +2623,8 @@ func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *s
 		}
 	}
 
-	// Tasks
+	// Tasks — project through paper's Def. 7 (Budget Projection) to bound
+	// session_context payload. Full task bodies are fetched via get_task(id).
 	assignedToMe, dispatchedByMe, _ := h.db.GetAgentTasks(project, agentName)
 	if assignedToMe == nil {
 		assignedToMe = []models.Task{}
@@ -2604,26 +2632,28 @@ func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *s
 	if dispatchedByMe == nil {
 		dispatchedByMe = []models.Task{}
 	}
-	// Build goal context for assigned tasks that have goal_id
+	// Build goal context, capped at goalContextCap unique goals and
+	// goalAncestryCap ancestors per goal (descriptions truncated).
 	goalContext := map[string]any{}
 	for _, t := range assignedToMe {
+		if len(goalContext) >= goalContextCap {
+			break
+		}
 		if t.GoalID != nil && *t.GoalID != "" {
 			if _, seen := goalContext[*t.GoalID]; !seen {
 				ancestry, _ := h.db.GetGoalAncestry(*t.GoalID, project)
 				goal, _ := h.db.GetGoal(*t.GoalID, project)
 				if goal != nil {
-					if ancestry == nil {
-						ancestry = []models.Goal{}
-					}
-					goalContext[*t.GoalID] = append(ancestry, *goal)
+					ancestry = projectGoalAncestry(ancestry)
+					goalContext[*t.GoalID] = append(ancestry, projectGoal(*goal))
 				}
 			}
 		}
 	}
 
 	result["pending_tasks"] = map[string]any{
-		"assigned_to_me":   assignedToMe,
-		"dispatched_by_me": dispatchedByMe,
+		"assigned_to_me":   projectTasks(assignedToMe, 8000),
+		"dispatched_by_me": projectTasks(dispatchedByMe, 3000),
 	}
 	if len(goalContext) > 0 {
 		result["goal_context"] = goalContext
@@ -2673,7 +2703,13 @@ func (h *Handlers) buildSessionContext(project, agentName string, profileSlug *s
 					}
 					vaultDocs := make([]vaultCtx, len(docs))
 					for i, d := range docs {
-						vaultDocs[i] = vaultCtx{Path: d.Path, Title: d.Title, Content: d.Content}
+						// Per-doc cap (head+tail projection) — a single oversize doc
+						// must not monopolize the budget.
+						vaultDocs[i] = vaultCtx{
+							Path:    d.Path,
+							Title:   d.Title,
+							Content: projectVaultDoc(d.Content, d.Path, 8000),
+						}
 					}
 					result["vault_context"] = vaultDocs
 				}

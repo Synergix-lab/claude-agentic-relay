@@ -3,10 +3,51 @@ package spawn
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"strconv"
 	"strings"
 
 	"agent-relay/internal/db"
 )
+
+// Spawn prompt budget constants (paper Def. 7).
+// taskDescMaxBytes bounds the task description embedded in the prompt; full
+// brief is reachable via get_task(task_id). vaultDocMaxBytesDefault bounds a
+// single vault doc injection; override via RELAY_VAULT_DOC_MAX_BYTES.
+const (
+	taskDescMaxBytes        = 4000
+	vaultDocMaxBytesDefault = 20000
+	vaultDocHeadBytes       = 200
+)
+
+// vaultDocMaxBytes returns the per-doc byte cap, honoring RELAY_VAULT_DOC_MAX_BYTES.
+func vaultDocMaxBytes() int {
+	if v := os.Getenv("RELAY_VAULT_DOC_MAX_BYTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > vaultDocHeadBytes+200 {
+			return n
+		}
+	}
+	return vaultDocMaxBytesDefault
+}
+
+// truncateVaultDoc applies head+tail projection to keep oversize vault docs within budget.
+// Returns truncated content, original size, and final size.
+func truncateVaultDoc(content, path string, maxBytes int) (string, int, int) {
+	orig := len(content)
+	if orig <= maxBytes {
+		return content, orig, orig
+	}
+	truncatedKB := (orig - maxBytes) / 1024
+	marker := fmt.Sprintf("\n<!-- %d KB truncated — call get_vault_doc(%q) for full content -->\n", truncatedKB, path)
+	head := content[:vaultDocHeadBytes]
+	tailLen := maxBytes - vaultDocHeadBytes - len(marker)
+	if tailLen <= 0 {
+		return head + marker, orig, len(head) + len(marker)
+	}
+	tail := content[orig-tailLen:]
+	return head + marker + tail, orig, len(head) + len(marker) + len(tail)
+}
 
 // SpawnContext is the fully-assembled context object that a spawned agent receives.
 // The agent opens its eyes knowing everything — zero boot calls needed.
@@ -222,6 +263,9 @@ func BuildSpawnContext(database *db.DB, project, profileSlug, cycleName string, 
 	// 3b. Vault docs — explicit vault_paths from the profile are always injected
 	// (both interactive and headless modes). This is the documented promise:
 	// "Profiles with vault_paths auto-inject those docs at boot".
+	// Each doc is head+tail-projected at vaultDocMaxBytes() to keep the spawn
+	// prompt under the paper's B_max invariant (Def. 7); oversize docs become
+	// pointers to get_vault_doc(path) instead of dominating the context.
 	var explicitVaultPaths []string
 	if profile.VaultPaths != "" && profile.VaultPaths != "[]" {
 		_ = json.Unmarshal([]byte(profile.VaultPaths), &explicitVaultPaths)
@@ -232,10 +276,17 @@ func BuildSpawnContext(database *db.DB, project, profileSlug, cycleName string, 
 			}
 			docs, err := database.GetVaultDocsByPaths(project, resolved, 0)
 			if err == nil {
+				docCap := vaultDocMaxBytes()
+				totalBytes := 0
+				perDoc := make([]string, 0, len(docs))
 				for _, d := range docs {
+					projected, orig, final := truncateVaultDoc(d.Content, d.Path, docCap)
 					ctx.Knowledge.Conventions = append(ctx.Knowledge.Conventions,
-						fmt.Sprintf("--- %s ---\n%s", d.Path, d.Content))
+						fmt.Sprintf("--- %s ---\n%s", d.Path, projected))
+					totalBytes += final
+					perDoc = append(perDoc, fmt.Sprintf("%s=%dKB(orig %dKB)", d.Path, final/1024, orig/1024))
 				}
+				log.Printf("spawn %s/%s vault_context=%dKB %s", project, profileSlug, totalBytes/1024, strings.Join(perDoc, ", "))
 			}
 		}
 	}
@@ -378,7 +429,14 @@ func FormatPrompt(ctx *SpawnContext) string {
 	if ctx.Task != nil {
 		b.WriteString("## Task\n\n")
 		fmt.Fprintf(&b, "**[%s] %s**\n\n", ctx.Task.Priority, ctx.Task.Title)
-		b.WriteString(ctx.Task.Description)
+		fmt.Fprintf(&b, "**task_id:** `%s` — pass to `claim_task` / `complete_task` / `block_task`.\n\n", ctx.Task.ID)
+		desc := ctx.Task.Description
+		if len(desc) > taskDescMaxBytes {
+			truncated := (len(desc) - taskDescMaxBytes) / 1024
+			desc = desc[:taskDescMaxBytes] + fmt.Sprintf(
+				"\n\n… (+%d KB truncated — call `get_task(task_id=%q)` for the full brief)", truncated, ctx.Task.ID)
+		}
+		b.WriteString(desc)
 		b.WriteString("\n")
 		if ctx.Task.Acceptance != "" {
 			fmt.Fprintf(&b, "\n**Acceptance criteria:** %s\n", ctx.Task.Acceptance)

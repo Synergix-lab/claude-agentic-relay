@@ -62,7 +62,18 @@ func (d *DB) RegisterAgent(project, name, role, description string, reportsTo, p
 		return nil, false, fmt.Errorf("query agent: %w", err)
 	}
 
-	// Existing agent — this is a respawn
+	// Existing agent — this is a respawn.
+	// Preserve reports_to and profile_slug on respawn when the caller passes nil.
+	// Previously a pool burst (10+ simultaneous task.dispatched triggers) could
+	// wipe reports_to across every spawned child because the internal spawn
+	// register call doesn't forward them. Preserving at the DB primitive level
+	// covers every caller (spawn, webhook, healer) in one shot.
+	if reportsTo == nil && a.ReportsTo != nil {
+		reportsTo = a.ReportsTo
+	}
+	if profileSlug == nil && a.ProfileSlug != nil {
+		profileSlug = a.ProfileSlug
+	}
 	_, err = d.conn.Exec(
 		"UPDATE agents SET role = ?, description = ?, last_seen = ?, reports_to = ?, profile_slug = ?, is_executive = ?, session_id = ?, interest_tags = ?, max_context_bytes = ?, status = 'active', deactivated_at = NULL WHERE name = ? AND project = ?",
 		role, description, now, reportsTo, profileSlug, isExecutive, sessionID, interestTags, maxContextBytes, name, project,

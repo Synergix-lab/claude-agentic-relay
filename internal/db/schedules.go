@@ -19,6 +19,16 @@ func (d *DB) DeleteSchedule(id string) {
 	_, _ = d.conn.Exec(`DELETE FROM schedules WHERE id = ?`, id)
 }
 
+// SetScheduleEnabled flips the enabled flag on a schedule.
+func (d *DB) SetScheduleEnabled(id string, enabled bool) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	e := 0
+	if enabled {
+		e = 1
+	}
+	_, _ = d.conn.Exec(`UPDATE schedules SET enabled = ?, updated_at = ? WHERE id = ?`, e, now, id)
+}
+
 // GetSchedule returns a single schedule by ID.
 func (d *DB) GetSchedule(id string) map[string]any {
 	var agentName, project, name, cronExpr, prompt, ttl, cycle, allowedTools, createdAt, updatedAt string

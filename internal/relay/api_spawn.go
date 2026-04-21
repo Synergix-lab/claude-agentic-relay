@@ -174,7 +174,15 @@ func (r *Relay) apiTriggerSchedule(w http.ResponseWriter, path string) {
 	}
 
 	if err := r.SpawnMgr.TriggerCycle(id); err != nil {
-		apiError(w, http.StatusNotFound, "trigger failed", err)
+		// Propagate the underlying cause — schedule not found / profile missing /
+		// lock held / quota exceeded / spawn error all produced identical
+		// "trigger failed" responses before, forcing log grep to diagnose.
+		b, _ := json.Marshal(map[string]any{
+			"error": "trigger failed",
+			"cause": err.Error(),
+		})
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(b)
 		return
 	}
 
@@ -211,6 +219,7 @@ func (r *Relay) apiUpdateSchedule(w http.ResponseWriter, req *http.Request, path
 		TTL          *string `json:"ttl"`
 		Cycle        *string `json:"cycle"`
 		AllowedTools *string `json:"allowed_tools"`
+		Enabled      *bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid JSON", err)
@@ -220,6 +229,32 @@ func (r *Relay) apiUpdateSchedule(w http.ResponseWriter, req *http.Request, path
 	if r.SpawnMgr == nil {
 		http.Error(w, `{"error":"scheduler not available"}`, http.StatusServiceUnavailable)
 		return
+	}
+
+	// Handle enabled-only toggle without forcing a full re-schedule. Previously
+	// PUT {"enabled":false} silently no-op'd because the body struct didn't
+	// expose the field and the code path always called Schedule() which forces
+	// enabled=1 via UpsertSchedule.
+	if body.Enabled != nil {
+		r.DB.SetScheduleEnabled(id, *body.Enabled)
+		sched := r.SpawnMgr.GetScheduler()
+		if *body.Enabled {
+			// Re-register the cron job if re-enabling (no-op if already present).
+			cronExpr, _ := existing["cron_expr"].(string)
+			prompt, _ := existing["prompt"].(string)
+			ttl, _ := existing["ttl"].(string)
+			cycle, _ := existing["cycle"].(string)
+			allowedTools, _ := existing["allowed_tools"].(string)
+			agentName, _ := existing["agent_name"].(string)
+			project, _ := existing["project"].(string)
+			name, _ := existing["name"].(string)
+			if body.CronExpr == nil && body.Prompt == nil && body.TTL == nil && body.Cycle == nil && body.AllowedTools == nil {
+				// Only touching enabled — re-register the existing job.
+				_ = r.SpawnMgr.Schedule(id, agentName, project, name, cronExpr, prompt, ttl, cycle, allowedTools)
+			}
+		} else if sched != nil {
+			sched.RemoveJob(id)
+		}
 	}
 
 	// Merge with existing values
@@ -232,6 +267,7 @@ func (r *Relay) apiUpdateSchedule(w http.ResponseWriter, req *http.Request, path
 	project, _ := existing["project"].(string)
 	name, _ := existing["name"].(string)
 
+	updatingContent := body.CronExpr != nil || body.Prompt != nil || body.TTL != nil || body.Cycle != nil || body.AllowedTools != nil
 	if body.CronExpr != nil {
 		cronExpr = *body.CronExpr
 	}
@@ -248,9 +284,18 @@ func (r *Relay) apiUpdateSchedule(w http.ResponseWriter, req *http.Request, path
 		allowedTools = *body.AllowedTools
 	}
 
-	if err := r.SpawnMgr.Schedule(id, agentName, project, name, cronExpr, prompt, ttl, cycle, allowedTools); err != nil {
-		apiError(w, http.StatusBadRequest, "update failed", err)
-		return
+	if updatingContent {
+		if err := r.SpawnMgr.Schedule(id, agentName, project, name, cronExpr, prompt, ttl, cycle, allowedTools); err != nil {
+			apiError(w, http.StatusBadRequest, "update failed", err)
+			return
+		}
+		// Schedule() re-enables; if the same PUT also disabled, re-apply.
+		if body.Enabled != nil && !*body.Enabled {
+			r.DB.SetScheduleEnabled(id, false)
+			if sched := r.SpawnMgr.GetScheduler(); sched != nil {
+				sched.RemoveJob(id)
+			}
+		}
 	}
 
 	b, _ := json.Marshal(map[string]any{"schedule_id": id, "status": "updated"})
@@ -345,6 +390,41 @@ func (r *Relay) apiDeleteTrigger(w http.ResponseWriter, path string) {
 	id = strings.TrimSuffix(id, "/")
 	r.DB.DeleteTrigger(id)
 	b, _ := json.Marshal(map[string]any{"id": id, "status": "deleted"})
+	w.Write(b)
+}
+
+// PUT /api/triggers/{id} — partial update. Fields left out of the body preserve
+// their existing values (PATCH semantics). Previously PUT fell through to a
+// silent 200 because no handler was wired, masking real update failures.
+func (r *Relay) apiUpdateTrigger(w http.ResponseWriter, req *http.Request, path string) {
+	id := strings.TrimPrefix(path, "/triggers/")
+	id = strings.TrimSuffix(id, "/")
+
+	existing := r.DB.GetTrigger(id)
+	if existing == nil {
+		http.Error(w, `{"error":"trigger not found"}`, http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		MatchRules      *string `json:"match_rules"`
+		ProfileSlug     *string `json:"profile_slug"`
+		Cycle           *string `json:"cycle"`
+		MaxDuration     *string `json:"max_duration"`
+		Enabled         *bool   `json:"enabled"`
+		CooldownSeconds *int    `json:"cooldown_seconds"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON", err)
+		return
+	}
+
+	updated, err := r.DB.UpdateTriggerFields(id, body.MatchRules, body.ProfileSlug, body.Cycle, body.MaxDuration, body.Enabled, body.CooldownSeconds)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "update trigger failed", err)
+		return
+	}
+	b, _ := json.Marshal(updated)
 	w.Write(b)
 }
 

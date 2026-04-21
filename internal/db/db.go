@@ -390,6 +390,17 @@ func migrate(conn *sql.DB) error {
 	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_id)`)
 	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_goal ON tasks(goal_id)`)
 
+	// Task progress notes (surfaced in web UI between claim and complete)
+	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS task_progress_notes (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id    TEXT NOT NULL,
+		project    TEXT NOT NULL DEFAULT 'default',
+		agent      TEXT NOT NULL,
+		note       TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_task_progress_notes_task ON task_progress_notes(task_id, created_at)`)
+
 	// Teams + Orgs
 	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS orgs (
 		id          TEXT PRIMARY KEY,
@@ -495,6 +506,7 @@ func migrate(conn *sql.DB) error {
 	)`)
 	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_project_time ON token_usage(project, created_at)`)
 	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_agent_time ON token_usage(project, agent, created_at)`)
+	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at)`)
 
 	// Spawn children tracking
 	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS spawn_children (
@@ -512,6 +524,10 @@ func migrate(conn *sql.DB) error {
 	)`)
 	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_spawn_children_parent ON spawn_children(parent_agent, project)`)
 	_, _ = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_spawn_children_status ON spawn_children(status)`)
+	ensureColumns(conn, "spawn_children", map[string]string{
+		"stdout_tail": "TEXT NOT NULL DEFAULT ''",
+		"stderr_tail": "TEXT NOT NULL DEFAULT ''",
+	})
 
 	// Schedules (cron jobs stored in DB)
 	_, _ = conn.Exec(`CREATE TABLE IF NOT EXISTS schedules (

@@ -230,10 +230,14 @@ func (d *DB) getSubtasks(parentID, project string, depth, maxDepth int) ([]model
 }
 
 // GetAgentTasks returns tasks assigned to or dispatched by an agent (for session_context).
+// All three queries are LIMITed to keep session_context bounded (paper Def. 7).
+// dispatched_by_me is explicitly filtered to active statuses only — cancelled,
+// done, and failed tasks would otherwise inflate the payload past the MCP output
+// limit for agents with long dispatch history.
 func (d *DB) GetAgentTasks(project, agentName string) (assignedToMe []models.Task, dispatchedByMe []models.Task, err error) {
 	// Assigned to me (active tasks) — close rows before next query
 	assignedToMe, err = d.queryTasks(
-		"SELECT "+taskColumns+" FROM tasks WHERE assigned_to = ? AND project = ? AND archived_at IS NULL AND status IN ('pending','accepted','in-progress') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END",
+		"SELECT "+taskColumns+" FROM tasks WHERE assigned_to = ? AND project = ? AND archived_at IS NULL AND status IN ('pending','accepted','in-progress') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END LIMIT 50",
 		agentName, project,
 	)
 	if err != nil {
@@ -244,16 +248,17 @@ func (d *DB) GetAgentTasks(project, agentName string) (assignedToMe []models.Tas
 	pending, err := d.queryTasks(
 		`SELECT `+taskColumns+` FROM tasks WHERE project = ? AND archived_at IS NULL AND status = 'pending' AND assigned_to IS NULL
 		 AND profile_slug IN (SELECT profile_slug FROM agents WHERE name = ? AND project = ? AND profile_slug IS NOT NULL)
-		 ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END`,
+		 ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END LIMIT 50`,
 		project, agentName, project,
 	)
 	if err == nil {
 		assignedToMe = append(assignedToMe, pending...)
 	}
 
-	// Dispatched by me (not done)
+	// Dispatched by me — active statuses only (pending/accepted/in-progress/blocked).
+	// Historical cancelled/done/failed tasks are reachable via list_tasks on demand.
 	dispatchedByMe, err = d.queryTasks(
-		"SELECT "+taskColumns+" FROM tasks WHERE dispatched_by = ? AND project = ? AND archived_at IS NULL AND status != 'done' ORDER BY dispatched_at DESC",
+		"SELECT "+taskColumns+" FROM tasks WHERE dispatched_by = ? AND project = ? AND archived_at IS NULL AND status IN ('pending','accepted','in-progress','blocked') ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END, dispatched_at DESC LIMIT 20",
 		agentName, project,
 	)
 	if err != nil {
@@ -261,6 +266,24 @@ func (d *DB) GetAgentTasks(project, agentName string) (assignedToMe []models.Tas
 	}
 
 	return assignedToMe, dispatchedByMe, nil
+}
+
+// GetOldestPendingTaskForProfile returns the oldest pending task for a profile
+// in a project. Used to re-fire task.dispatched after a child completes and the
+// pool frees up.
+func (d *DB) GetOldestPendingTaskForProfile(project, profileSlug string) (*models.Task, error) {
+	row := d.ro().QueryRow(
+		"SELECT "+taskColumns+" FROM tasks WHERE project = ? AND profile_slug = ? AND status = 'pending' AND archived_at IS NULL ORDER BY dispatched_at ASC LIMIT 1",
+		project, profileSlug,
+	)
+	t, err := scanTask(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get oldest pending task: %w", err)
+	}
+	return &t, nil
 }
 
 // queryTasks runs a query and collects all tasks, closing rows before returning.

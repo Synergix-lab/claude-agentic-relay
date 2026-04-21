@@ -2304,7 +2304,7 @@ function renderTasks() {
       </div>
     `;
 
-    el.addEventListener("click", () => {
+    el.addEventListener("click", async () => {
       const existing = el.querySelector(".task-expanded");
       if (existing) { existing.remove(); return; }
       const expanded = document.createElement("div");
@@ -2316,6 +2316,32 @@ function renderTasks() {
       if (task.blocked_reason) details += `\n\nBlocked: ${task.blocked_reason}`;
       expanded.textContent = details;
       el.appendChild(expanded);
+
+      // Progress notes — surfaced between claim and complete for long-running tasks.
+      try {
+        const proj = task.project || "default";
+        const resp = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/progress?project=${encodeURIComponent(proj)}`);
+        if (resp.ok) {
+          const notes = await resp.json();
+          if (Array.isArray(notes) && notes.length > 0) {
+            const notesEl = document.createElement("div");
+            notesEl.className = "task-progress-notes";
+            const title = document.createElement("div");
+            title.className = "task-progress-title";
+            title.textContent = `Progress (${notes.length})`;
+            notesEl.appendChild(title);
+            for (const n of notes) {
+              const line = document.createElement("div");
+              line.className = "task-progress-note";
+              line.textContent = `[${formatTime(n.created_at)}] ${n.agent}: ${n.note}`;
+              notesEl.appendChild(line);
+            }
+            el.appendChild(notesEl);
+          }
+        }
+      } catch (_e) {
+        // best-effort — swallow fetch failures.
+      }
     });
 
     tasksList.appendChild(el);

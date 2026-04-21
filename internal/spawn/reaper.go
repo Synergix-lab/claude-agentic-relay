@@ -61,6 +61,6 @@ func reapGhosts(database *db.DB, mgr *Manager, logger *slog.Logger) {
 			"profile", profile,
 			"started_at", startedAt,
 		)
-		database.UpdateSpawnChild(id, "dead", -1, "ghost: process not tracked (relay restart or crash)")
+		database.UpdateSpawnChild(id, "dead", -1, "ghost: process not tracked (relay restart or crash)", "", "")
 	}
 }

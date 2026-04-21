@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,6 +15,22 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// defaultMaxConcurrentSpawns bounds the total number of claude subprocesses
+// that can run simultaneously across all projects/profiles. Each claude CLI
+// process consumes multi-GB RAM and parallel API rate — without a global cap,
+// a 15-way batch dispatch can OOM the host. Override via MAX_CONCURRENT_SPAWNS.
+const defaultMaxConcurrentSpawns = 10
+
+// maxConcurrentSpawns reads the cap from the env, falling back to the default.
+func maxConcurrentSpawns() int {
+	if v := os.Getenv("MAX_CONCURRENT_SPAWNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxConcurrentSpawns
+}
 
 // ChildState tracks a running spawned child process.
 type ChildState struct {
@@ -37,7 +55,8 @@ type Manager struct {
 	live      *LiveBuffer
 	metrics   *MetricsCollector
 	logger    *slog.Logger
-	maxPool   int // global max concurrent children
+	maxPool   int           // global max concurrent children (per-project soft cap)
+	gate      chan struct{} // semaphore: hard cap on concurrent claude subprocesses
 }
 
 // NewManager creates a spawn manager.
@@ -53,11 +72,36 @@ func NewManager(database *db.DB, executor *Executor, lockMgr *lock.Manager, queu
 		metrics:   NewMetricsCollector(1000),
 		logger:    logger,
 		maxPool:   maxPool,
+		gate:      make(chan struct{}, maxConcurrentSpawns()),
+	}
+}
+
+// tryAcquireGate returns true if a slot was acquired (non-blocking).
+func (m *Manager) tryAcquireGate() bool {
+	select {
+	case m.gate <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseGate returns a slot to the semaphore. Safe to call from the spawn goroutine.
+func (m *Manager) releaseGate() {
+	select {
+	case <-m.gate:
+	default:
 	}
 }
 
 // Spawn creates a child agent process. Returns the child ID.
 func (m *Manager) Spawn(parentAgent, project, profile, prompt, ttlStr, allowedTools string) (string, error) {
+	// Global concurrency cap — must be acquired BEFORE registering the child so
+	// a saturated relay fails fast instead of half-booting a claude process.
+	if !m.tryAcquireGate() {
+		return "", fmt.Errorf("relay saturated: %d/%d concurrent spawns, retry", len(m.gate), cap(m.gate))
+	}
+
 	m.mu.Lock()
 
 	// Check global pool limit
@@ -69,6 +113,7 @@ func (m *Manager) Spawn(parentAgent, project, profile, prompt, ttlStr, allowedTo
 	}
 	if activeCount >= m.maxPool {
 		m.mu.Unlock()
+		m.releaseGate()
 		return "", fmt.Errorf("pool full: %d/%d active children in project %s", activeCount, m.maxPool, project)
 	}
 
@@ -111,6 +156,7 @@ Boot sequence:
 
 	// Spawn in background goroutine
 	go func() {
+		defer m.releaseGate()
 		m.live.Start(childID, "spawn")
 
 		params := SpawnParams{
@@ -147,7 +193,7 @@ Boot sequence:
 		if result.Err != nil {
 			errMsg = result.Err.Error()
 		}
-		m.db.UpdateSpawnChild(childID, "finished", result.ExitCode, errMsg)
+		m.db.UpdateSpawnChild(childID, "finished", result.ExitCode, errMsg, result.Stdout, result.Stderr)
 
 		// Record cycle history
 		m.db.RecordCycleHistory(parentAgent, project, "spawn:"+profile,
@@ -189,7 +235,7 @@ func (m *Manager) KillChild(childID string) error {
 	}
 
 	child.Cancel()
-	m.db.UpdateSpawnChild(childID, "killed", -1, "killed by parent")
+	m.db.UpdateSpawnChild(childID, "killed", -1, "killed by parent", "", "")
 
 	m.mu.Lock()
 	delete(m.children, childID)
@@ -290,6 +336,10 @@ func (m *Manager) SpawnWithContext(project, profileSlug, cycleName, taskID strin
 // Intended for prompts already built via FormatPrompt(ctx) — they contain
 // a complete identity+boot section with the canonical register_agent call.
 func (m *Manager) spawnAssembled(project, profile, assembledPrompt, ttlStr, allowedTools string) (string, error) {
+	if !m.tryAcquireGate() {
+		return "", fmt.Errorf("relay saturated: %d/%d concurrent spawns, retry", len(m.gate), cap(m.gate))
+	}
+
 	m.mu.Lock()
 	activeCount := 0
 	for _, c := range m.children {
@@ -299,6 +349,7 @@ func (m *Manager) spawnAssembled(project, profile, assembledPrompt, ttlStr, allo
 	}
 	if activeCount >= m.maxPool {
 		m.mu.Unlock()
+		m.releaseGate()
 		return "", fmt.Errorf("pool full: %d/%d active children in project %s", activeCount, m.maxPool, project)
 	}
 
@@ -321,6 +372,7 @@ func (m *Manager) spawnAssembled(project, profile, assembledPrompt, ttlStr, allo
 	ttl := scheduler.ParseTTL(ttlStr)
 
 	go func() {
+		defer m.releaseGate()
 		m.live.Start(childID, "spawn")
 		params := SpawnParams{
 			Prompt:       assembledPrompt,
@@ -350,7 +402,7 @@ func (m *Manager) spawnAssembled(project, profile, assembledPrompt, ttlStr, allo
 			metric.Error = errMsg
 		}
 		m.metrics.Record(metric)
-		m.db.UpdateSpawnChild(childID, "finished", result.ExitCode, errMsg)
+		m.db.UpdateSpawnChild(childID, "finished", result.ExitCode, errMsg, result.Stdout, result.Stderr)
 		m.db.RecordCycleHistory(parentName, project, "spawn:"+profile,
 			result.Duration.Milliseconds(), result.ExitCode == 0, result.ExitCode, errMsg,
 			result.Tokens.InputTokens, result.Tokens.OutputTokens,

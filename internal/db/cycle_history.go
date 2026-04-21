@@ -1,5 +1,17 @@
 package db
 
+import "time"
+
+// PurgeCycleHistory removes cycle_history rows older than the given duration.
+func (d *DB) PurgeCycleHistory(maxAge time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-maxAge).Format("2006-01-02 15:04:05")
+	res, err := d.conn.Exec("DELETE FROM cycle_history WHERE created_at < ?", cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // RecordCycleHistory persists a cycle execution metric.
 func (d *DB) RecordCycleHistory(agentName, project, cycleName string, durationMs int64, success bool, exitCode int, errMsg string, inputTokens, outputTokens, cacheRead, cacheCreation int64) {
 	successInt := 0
