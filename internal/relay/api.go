@@ -66,6 +66,8 @@ func (r *Relay) ServeAPI(w http.ResponseWriter, req *http.Request) {
 		r.apiGetAllMessages(w, req)
 	case path == "/messages/latest" && req.Method == http.MethodGet:
 		r.apiGetLatestMessages(w, req)
+	case path == "/inbox/count" && req.Method == http.MethodGet:
+		r.apiGetInboxCount(w, req)
 	case path == "/user-response" && req.Method == http.MethodPost:
 		r.apiPostUserResponse(w, req)
 	// Memory endpoints
@@ -657,8 +659,38 @@ func (r *Relay) apiGetLatestMessages(w http.ResponseWriter, req *http.Request) {
 	if msgs == nil {
 		msgs = make([]models.Message, 0)
 	}
-
 	writeJSON(w, msgs)
+}
+
+// apiGetInboxCount returns the number of unread (non-expired) messages for an
+// agent. Read-only: does not change delivery state. Intended for external
+// poll loops that need a wake signal aligned with get_inbox semantics without
+// using the MCP transport.
+//
+// GET /api/inbox/count?project=<project>&agent=<slug>
+// Response: {"count": <int>, "project": <string>, "agent": <string>}
+func (r *Relay) apiGetInboxCount(w http.ResponseWriter, req *http.Request) {
+	project := projectFromRequest(req)
+	agent := req.URL.Query().Get("agent")
+	if agent == "" {
+		http.Error(w, `{"error":"agent query parameter is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Expire stale messages before counting so callers see fresh state.
+	_, _ = r.DB.ExpireMessages()
+
+	n, err := r.DB.CountUnread(project, agent)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "failed to count unread", err)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"count":   n,
+		"project": project,
+		"agent":   agent,
+	})
 }
 
 // apiGetOrgTree returns the agent hierarchy as a nested tree structure.

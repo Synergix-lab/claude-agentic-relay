@@ -276,3 +276,58 @@ func (d *DB) ExpireMessages() (int, error) {
 	n, _ := result.RowsAffected()
 	return int(n), nil
 }
+
+// CountUnread returns the number of unread (non-expired) messages for an agent.
+// Read-only: unlike GetInbox, it does not flip delivery state from 'queued' to
+// 'surfaced', so callers (e.g. poll loops / gate scripts) can safely use it as
+// a wake signal without affecting what the agent sees from get_inbox.
+//
+// Mirrors the same filters as GetInbox (deliveries-based when available, falls
+// back to the legacy message_reads path otherwise).
+func (d *DB) CountUnread(project, agent string) (int, error) {
+	if d.HasDeliveries() {
+		return d.countUnreadViaDeliveries(project, agent)
+	}
+	return d.countUnreadLegacy(project, agent)
+}
+
+func (d *DB) countUnreadViaDeliveries(project, agent string) (int, error) {
+	var n int
+	err := d.ro().QueryRow(
+		`SELECT COUNT(*)
+		 FROM deliveries d
+		 JOIN messages m ON d.message_id = m.id
+		 WHERE d.project = ? AND d.to_agent = ?
+		   AND d.state = 'queued'
+		   AND m.expired_at IS NULL`,
+		project, agent,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count unread via deliveries: %w", err)
+	}
+	return n, nil
+}
+
+func (d *DB) countUnreadLegacy(project, agent string) (int, error) {
+	var n int
+	err := d.ro().QueryRow(
+		`SELECT COUNT(*) FROM messages m
+		 WHERE m.project = ?
+		   AND m.expired_at IS NULL
+		   AND (
+		     (m.conversation_id IS NULL AND (m.to_agent = ? OR (m.to_agent = '*' AND m.from_agent != ?)))
+		     OR (m.conversation_id IS NOT NULL AND m.conversation_id IN (
+		       SELECT conversation_id FROM conversation_members
+		       WHERE agent_name = ? AND left_at IS NULL
+		     ) AND m.from_agent != ?)
+		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.agent_name = ?
+		   )`,
+		project, agent, agent, agent, agent, agent,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count unread legacy: %w", err)
+	}
+	return n, nil
+}
