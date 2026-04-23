@@ -392,3 +392,78 @@ func TestHeavyLoad(t *testing.T) {
 		t.Errorf("expected %d messages, got %d", writes, len(msgs))
 	}
 }
+
+func TestCountUnread(t *testing.T) {
+	d := testDB(t)
+
+	_, _, _ = d.RegisterAgent("default", "sender", "test", "", nil, nil, false, nil, "[]", 0)
+	_, _, _ = d.RegisterAgent("default", "receiver", "test", "", nil, nil, false, nil, "[]", 0)
+
+	// Empty inbox → count 0
+	n, err := d.CountUnread("default", "receiver")
+	if err != nil {
+		t.Fatalf("CountUnread on empty: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 unread on empty, got %d", n)
+	}
+
+	// Send 3 direct messages to receiver, creating deliveries
+	var msgIDs []string
+	for i := 0; i < 3; i++ {
+		msg, err := d.InsertMessage("default", "sender", "receiver", "notification", "test", fmt.Sprintf("msg-%d", i), "{}", "P2", 3600, nil, nil)
+		if err != nil {
+			t.Fatalf("InsertMessage: %v", err)
+		}
+		if err := d.CreateDeliveries(msg.ID, "default", []string{"receiver"}); err != nil {
+			t.Fatalf("CreateDeliveries: %v", err)
+		}
+		msgIDs = append(msgIDs, msg.ID)
+	}
+
+	n, err = d.CountUnread("default", "receiver")
+	if err != nil {
+		t.Fatalf("CountUnread after inserts: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("expected 3 unread after inserts, got %d", n)
+	}
+
+	// Unrelated agent should still see 0
+	n, _ = d.CountUnread("default", "sender")
+	if n != 0 {
+		t.Fatalf("expected 0 unread for sender, got %d", n)
+	}
+
+	// MarkRead one → count drops by 1
+	if _, err := d.MarkRead([]string{msgIDs[0]}, "receiver", "default"); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	n, _ = d.CountUnread("default", "receiver")
+	if n != 2 {
+		t.Fatalf("expected 2 unread after mark_read, got %d", n)
+	}
+
+	// Force-expire one of the remaining messages → count drops by 1
+	if _, err := d.conn.Exec(
+		"UPDATE messages SET expired_at = ? WHERE id = ?",
+		"2020-01-01T00:00:00.000000Z", msgIDs[1],
+	); err != nil {
+		t.Fatalf("force expire: %v", err)
+	}
+	n, _ = d.CountUnread("default", "receiver")
+	if n != 1 {
+		t.Fatalf("expected 1 unread after expiring one, got %d", n)
+	}
+
+	// Sanity: CountUnread must not flip deliveries to 'surfaced' (it's read-only).
+	// A subsequent GetInbox(unread_only=true) should still return the remaining
+	// queued message.
+	msgs, err := d.GetInbox("default", "receiver", true, 10)
+	if err != nil {
+		t.Fatalf("GetInbox: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected GetInbox to still see 1 queued message after CountUnread, got %d", len(msgs))
+	}
+}
